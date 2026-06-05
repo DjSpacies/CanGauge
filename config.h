@@ -2,191 +2,114 @@
 #define CONFIG_H
 
 // ============================================================================
-// HARDWARE CONFIGURATION
+// DISPLAY DRIVER SELECTION — uncomment exactly one
 // ============================================================================
+#define DISPLAY_DRIVER_I2C   // Adafruit SSD1306 over I2C (Wire)
+// #define DISPLAY_DRIVER_SPI   // U8g2 SSD1306 over hardware SPI
 
-// Board Selection - uncomment the board you're using
-#define BOARD_NANO
-// #define BOARD_MEGA
-// #define BOARD_UNO
-
-// Pin Definitions
-#ifdef BOARD_NANO
-  #define SPI_CS_PIN 10
-  #define CAN_INT_PIN 7
-  #define ENCODER_CLK_PIN 2
-  #define ENCODER_DT_PIN 3
-  #define ENCODER_BTN_PIN 4
-  // I2C pins are fixed on Nano: A4 (SDA), A5 (SCL)
+#if defined(DISPLAY_DRIVER_I2C) && defined(DISPLAY_DRIVER_SPI)
+  #error "Only one display driver may be selected at a time."
 #endif
-
-#ifdef BOARD_MEGA
-  #define SPI_CS_PIN 10
-  #define CAN_INT_PIN 2
-  #define ENCODER_CLK_PIN 3
-  #define ENCODER_DT_PIN 4
-  #define ENCODER_BTN_PIN 5
-  // I2C pins are fixed on Mega: 20 (SDA), 21 (SCL)
-#endif
-
-#ifdef BOARD_UNO
-  #define SPI_CS_PIN 10
-  #define CAN_INT_PIN 7
-  #define ENCODER_CLK_PIN 2
-  #define ENCODER_DT_PIN 3
-  #define ENCODER_BTN_PIN 4
-  // I2C pins are fixed on Uno: A4 (SDA), A5 (SCL)
+#if !defined(DISPLAY_DRIVER_I2C) && !defined(DISPLAY_DRIVER_SPI)
+  #error "A display driver must be selected in config.h."
 #endif
 
 // ============================================================================
-// DISPLAY CONFIGURATION
+// HARDWARE — PIN DEFINITIONS
 // ============================================================================
 
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-#define OLED_ADDRESS 0x3C
-#define OLED_RESET -1
-#define X_PADDING 8
+// CAN (MCP2515) — SPI, shared bus
+#define CAN_CS_PIN    10
+#define CAN_INT_PIN   2
 
-// Display update settings
-#define DISPLAY_UPDATE_INTERVAL 100  // Milliseconds between display updates
-#define DISPLAY_THROTTLE_ENABLED true
+// Push button — cycles through display modes
+#define BUTTON_PIN    4
 
-// Bar graph dimensions
-#define BAR_WIDTH 6
-#define BAR_HEIGHT 21
-#define GAUGE_LENGTH 19
+// SPI display pins — only relevant when DISPLAY_DRIVER_SPI is selected
+// These are ignored entirely when using I2C
+#define DISP_CS_PIN   9
+#define DISP_DC_PIN   8
+#define DISP_RST_PIN  7
+
+// I2C display — only relevant when DISPLAY_DRIVER_I2C is selected
+// SDA = A4, SCL = A5 on Nano (hardware fixed, no define needed)
+#define OLED_I2C_ADDRESS  0x3C
+
+// ============================================================================
+// DISPLAY GEOMETRY
+// ============================================================================
+
+#define SCREEN_WIDTH   128
+#define SCREEN_HEIGHT  64
+#define X_PADDING      8
+
+// ============================================================================
+// DISPLAY PERFORMANCE
+// ============================================================================
+
+// Target display refresh interval in milliseconds
+// I2C is slower — 80ms (~12fps) is a comfortable ceiling at 400kHz
+// SPI can push 50ms (~20fps) comfortably
+#ifdef DISPLAY_DRIVER_I2C
+  #define DISPLAY_UPDATE_INTERVAL  80
+  #define I2C_CLOCK_SPEED          400000L  // 400kHz Fast Mode
+#endif
+
+#ifdef DISPLAY_DRIVER_SPI
+  #define DISPLAY_UPDATE_INTERVAL  50
+#endif
 
 // ============================================================================
 // CAN BUS CONFIGURATION
 // ============================================================================
 
-// CAN Bus Speed - uncomment the one you're using
-#define CAN_SPEED CAN_125KBPS
-// #define CAN_SPEED CAN_250KBPS
-// #define CAN_SPEED CAN_500KBPS
-// #define CAN_SPEED CAN_1000KBPS
-
-// CAN initialization settings
-#define MAX_CAN_INIT_ATTEMPTS 10
-#define CAN_INIT_RETRY_DELAY 100  // Milliseconds
-
-// CAN message processing
-#define MAX_MESSAGES_PER_LOOP 5   // How many CAN messages to process per loop
-#define CAN_DATA_TIMEOUT 2000      // Milliseconds before data is considered stale
+#define CAN_SPEED              CAN_125KBPS
+#define CAN_CLOCK              MCP_16MHz      // Crystal on most MCP2515 boards
+#define MAX_CAN_INIT_ATTEMPTS  10
+#define CAN_INIT_RETRY_DELAY   100            // ms between retries
+#define MAX_MESSAGES_PER_LOOP  10             // Max CAN frames drained per loop
+#define CAN_DATA_TIMEOUT       3000           // ms before value shown as stale
 
 // ============================================================================
-// CAN PACKET DEFINITIONS
+// CAN MESSAGE IDs (first byte of your CAN packets)
 // ============================================================================
 
-// CAN Message IDs (first byte of CAN packet)
-#define CAN_MSG_ID_ECT 2
-#define CAN_MSG_ID_VOLTAGE 3
-#define CAN_MSG_ID_OIL_TEMP 8
-
-// ECT (Engine Coolant Temperature) Configuration
-struct ECTConfig {
-  static const uint8_t messageID = CAN_MSG_ID_ECT;
-  static const uint8_t minDataLength = 8;      // Minimum packet length required
-  static const uint8_t startBit = 55;          // Bit position in packet
-  static const uint8_t bytePosition = 6;       // Calculated: startBit / 8
-  static const uint8_t bitLength = 16;         // Number of bits
-  static const int16_t offset = 50;            // Value offset
-  static const float scale = 1.0;              // Scaling factor
-  static const float minValid = -40.0;         // Minimum valid value
-  static const float maxValid = 200.0;         // Maximum valid value
-  static const char* label = "ECT";
-  static const char* units = "C";
-  static const char* longLabel = "ECT: ";
-};
-
-// Oil Temperature Configuration
-struct OilTempConfig {
-  static const uint8_t messageID = CAN_MSG_ID_OIL_TEMP;
-  static const uint8_t minDataLength = 4;
-  static const uint8_t startBit = 23;
-  static const uint8_t bytePosition = 2;       // Calculated: startBit / 8
-  static const uint8_t bitLength = 16;
-  static const int16_t offset = 50;
-  static const float scale = 1.0;
-  static const float minValid = -40.0;
-  static const float maxValid = 200.0;
-  static const char* label = "Oil";
-  static const char* longLabel = "Oil Temp: ";
-  static const char* units = "C";
-};
-
-// Voltage Configuration
-struct VoltageConfig {
-  static const uint8_t messageID = CAN_MSG_ID_VOLTAGE;
-  static const uint8_t minDataLength = 6;
-  static const uint8_t startBit = 39;
-  static const uint8_t bytePosition = 4;       // Calculated: startBit / 8
-  static const uint8_t bitLength = 16;
-  static const int16_t offset = 0;
-  static const float scale = 0.01;             // Value is divided by 100
-  static const float minValid = 0.0;
-  static const float maxValid = 20.0;
-  static const char* label = "Volt";
-  static const char* longLabel = "Voltage: ";
-  static const char* units = "V";
-  static const uint8_t decimalPlaces = 1;      // How many decimal places to display
-};
+#define CAN_MSG_ECT      2
+#define CAN_MSG_VOLTAGE  3
+#define CAN_MSG_OIL      8
 
 // ============================================================================
-// ADVANCED CAN PACKET PARSING
+// GAUGE DISPLAY RANGES
 // ============================================================================
 
-// If your CAN packets use different endianness, change this
-#define CAN_LITTLE_ENDIAN true
-// #define CAN_BIG_ENDIAN true
+#define TEMP_GAUGE_MIN   0.0f
+#define TEMP_GAUGE_MAX   120.0f
+#define VOLT_GAUGE_MIN   0.0f
+#define VOLT_GAUGE_MAX   20.0f
 
-// If your CAN packets are signed values
-#define ECT_IS_SIGNED false
-#define OIL_TEMP_IS_SIGNED false
-#define VOLTAGE_IS_SIGNED false
-
-// ============================================================================
-// DISPLAY THRESHOLDS
-// ============================================================================
-
-// Minimum change required to trigger display update
-#define TEMP_CHANGE_THRESHOLD 1.0    // Degrees
-#define VOLTAGE_CHANGE_THRESHOLD 0.1 // Volts
-
-// Gauge display ranges (for bar graph mode)
-#define TEMP_GAUGE_MAX 120.0         // Maximum temperature for gauge
-#define VOLTAGE_GAUGE_MAX 20.0       // Maximum voltage for gauge
+// Bar graph geometry
+#define BAR_WIDTH        6
+#define BAR_HEIGHT       21
+#define GAUGE_LENGTH     19
 
 // ============================================================================
-// SERIAL CONFIGURATION
+// BUTTON DEBOUNCE
 // ============================================================================
 
-#define SERIAL_BAUD_RATE 115200
-#define SERIAL_ENABLED true          // Set to false to disable all serial output
-#define SERIAL_DEBUG false           // Set to true for verbose debugging
+#define BUTTON_DEBOUNCE_MS  50
 
 // ============================================================================
-// INPUT CONFIGURATION
+// SERIAL
 // ============================================================================
 
-#define ENCODER_DEBOUNCE_DELAY 50    // Milliseconds
-#define BUTTON_DEBOUNCE_DELAY 50     // Milliseconds
-
-// ============================================================================
-// I2C CONFIGURATION
-// ============================================================================
-
-#define I2C_CLOCK_SPEED 400000L      // 400kHz (Fast Mode)
-// #define I2C_CLOCK_SPEED 100000L   // 100kHz (Standard Mode) - use if you have issues
+#define SERIAL_BAUD_RATE  115200
 
 // ============================================================================
 // FEATURE FLAGS
 // ============================================================================
 
-#define ENABLE_SPLASH_SCREEN true
-#define ENABLE_STALE_DATA_DETECTION true
-#define ENABLE_CAN_INTERRUPT false    // Set to true to use interrupt-driven CAN
-#define ENABLE_VALUE_VALIDATION true  // Validate values are within min/max range
+#define ENABLE_SPLASH_SCREEN      true
+#define ENABLE_STALE_DETECTION    true
+#define CAN_DATA_TIMEOUT_MS       3000
 
 #endif // CONFIG_H
