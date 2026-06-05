@@ -4,7 +4,7 @@
 // ============================================================================
 // DISPLAY DRIVER SELECTION — uncomment exactly one
 // ============================================================================
-#define DISPLAY_DRIVER_I2C   // Adafruit SSD1306 over I2C (Wire)
+#define DISPLAY_DRIVER_I2C   // Adafruit SSD1306 over I2C
 // #define DISPLAY_DRIVER_SPI   // U8g2 SSD1306 over hardware SPI
 
 #if defined(DISPLAY_DRIVER_I2C) && defined(DISPLAY_DRIVER_SPI)
@@ -18,21 +18,20 @@
 // HARDWARE — PIN DEFINITIONS
 // ============================================================================
 
-// CAN (MCP2515) — SPI, shared bus
-#define CAN_CS_PIN    10
-#define CAN_INT_PIN   2
+// MCP2515 CAN controller — SPI
+#define CAN_CS_PIN   10
+#define CAN_INT_PIN  2
 
-// Push button — cycles through display modes
-#define BUTTON_PIN    4
+// Push button — short press cycles parameter, long press toggles display type
+#define BUTTON_PIN   4
 
-// SPI display pins — only relevant when DISPLAY_DRIVER_SPI is selected
-// These are ignored entirely when using I2C
+// SPI display pins — only used when DISPLAY_DRIVER_SPI is active
+// Hardware SPI MOSI = pin 11, SCK = pin 13 (fixed on Nano, no define needed)
 #define DISP_CS_PIN   9
 #define DISP_DC_PIN   8
 #define DISP_RST_PIN  7
 
-// I2C display — only relevant when DISPLAY_DRIVER_I2C is selected
-// SDA = A4, SCL = A5 on Nano (hardware fixed, no define needed)
+// I2C display — SDA = A4, SCL = A5 on Nano (hardware fixed)
 #define OLED_I2C_ADDRESS  0x3C
 
 // ============================================================================
@@ -45,30 +44,35 @@
 
 // ============================================================================
 // DISPLAY PERFORMANCE
+// I2C tops out around 12fps at 400kHz — 80ms interval is comfortable.
+// SPI can sustain 20fps easily — 50ms interval.
 // ============================================================================
-
-// Target display refresh interval in milliseconds
-// I2C is slower — 80ms (~12fps) is a comfortable ceiling at 400kHz
-// SPI can push 50ms (~20fps) comfortably
 #ifdef DISPLAY_DRIVER_I2C
-  #define DISPLAY_UPDATE_INTERVAL  80
-  #define I2C_CLOCK_SPEED          400000L  // 400kHz Fast Mode
+  #define DISPLAY_UPDATE_INTERVAL  80    // ms (~12fps)
+  #define I2C_CLOCK_SPEED          400000L
 #endif
 
 #ifdef DISPLAY_DRIVER_SPI
-  #define DISPLAY_UPDATE_INTERVAL  50
+  #define DISPLAY_UPDATE_INTERVAL  50    // ms (~20fps)
 #endif
 
 // ============================================================================
-// CAN BUS CONFIGURATION
+// BUTTON TIMING
+// ============================================================================
+
+#define BUTTON_DEBOUNCE_MS    50    // Ignore transitions shorter than this
+#define BUTTON_LONG_PRESS_MS  500   // Hold duration that triggers a long press
+
+// ============================================================================
+// CAN BUS
 // ============================================================================
 
 #define CAN_SPEED              CAN_125KBPS
-#define CAN_CLOCK              MCP_16MHz      // Crystal on most MCP2515 boards
+#define CAN_CLOCK              MCP_16MHz     // 16MHz crystal on most MCP2515 boards
 #define MAX_CAN_INIT_ATTEMPTS  10
-#define CAN_INIT_RETRY_DELAY   100            // ms between retries
-#define MAX_MESSAGES_PER_LOOP  10             // Max CAN frames drained per loop
-#define CAN_DATA_TIMEOUT       3000           // ms before value shown as stale
+#define CAN_INIT_RETRY_DELAY   100           // ms between init retries
+#define MAX_MESSAGES_PER_LOOP  10            // Max CAN frames drained per loop
+#define CAN_DATA_TIMEOUT       3000          // ms before a value is shown as stale
 
 // ============================================================================
 // CAN MESSAGE IDs (first byte of your CAN packets)
@@ -87,16 +91,10 @@
 #define VOLT_GAUGE_MIN   0.0f
 #define VOLT_GAUGE_MAX   20.0f
 
-// Bar graph geometry
+// Bar graph geometry (pixels)
 #define BAR_WIDTH        6
 #define BAR_HEIGHT       21
 #define GAUGE_LENGTH     19
-
-// ============================================================================
-// BUTTON DEBOUNCE
-// ============================================================================
-
-#define BUTTON_DEBOUNCE_MS  50
 
 // ============================================================================
 // SERIAL
@@ -108,8 +106,6 @@
 // FEATURE FLAGS
 // ============================================================================
 
-#define ENABLE_SPLASH_SCREEN      true
-#define ENABLE_STALE_DETECTION    true
-#define CAN_DATA_TIMEOUT_MS       3000
+#define ENABLE_SPLASH_SCREEN  true
 
 #endif // CONFIG_H
