@@ -6,43 +6,46 @@
 
 // ============================================================================
 // DISPLAY ABSTRACTION INTERFACE
+//
 // All functions are implemented in either display_i2c.cpp or display_spi.cpp
 // depending on the DISPLAY_DRIVER_* define in config.h.
-// The main sketch calls only these — never library functions directly.
+//
+// CanGauge.ino calls only these functions — it never touches a display
+// library directly. Swapping hardware requires only a config.h change.
 // ============================================================================
 
-// Initialise the display hardware. Call once from setup().
+// Initialise display hardware. Call once from setup() before anything else.
 void displayInit();
 
-// Show the splash screen animation. Call once from setup() after displayInit().
+// Play the splash screen animation. Call once from setup() after displayInit().
 void displaySplash();
 
-// Draw a bar graph screen.
-// label   — short string shown at top (e.g. "ECT", "Oil", "Volt")
-// value   — current float value
-// minVal  — minimum of gauge range
-// maxVal  — maximum of gauge range
-// unit    — unit string appended to value (e.g. "C", "V")
-// decimals — decimal places to show (0 for temp, 1 for volts)
-// stale   — if true, a "NO DATA" warning is overlaid
+// Draw a bar graph screen for the given parameter.
+//   label    — short label shown at top centre  e.g. "ECT", "Oil", "Volt"
+//   value    — current reading
+//   minVal   — minimum of the gauge scale
+//   maxVal   — maximum of the gauge scale
+//   unit     — unit suffix appended to the value  e.g. "C", "V"
+//   decimals — decimal places to render (0 for temperature, 1 for voltage)
+//   stale    — when true a "NO DATA" warning is overlaid on the screen
 void displayBarGraph(const char* label,
-                     float value,
-                     float minVal,
-                     float maxVal,
+                     float       value,
+                     float       minVal,
+                     float       maxVal,
                      const char* unit,
-                     uint8_t decimals,
-                     bool stale);
+                     uint8_t     decimals,
+                     bool        stale);
 
-// Draw a large-text screen.
-// label    — descriptor shown small at top
-// value    — current float value
-// unit     — unit string
-// decimals — decimal places (0 for temp, 1 for volts)
-// stale    — if true, a "NO DATA" warning is overlaid
+// Draw a large-text screen for the given parameter.
+//   label    — descriptor shown small at the top  e.g. "ECT", "Oil Temp"
+//   value    — current reading
+//   unit     — unit suffix
+//   decimals — decimal places
+//   stale    — when true a "NO DATA" warning is overlaid
 void displayTextScreen(const char* label,
-                       float value,
+                       float       value,
                        const char* unit,
-                       uint8_t decimals,
-                       bool stale);
+                       uint8_t     decimals,
+                       bool        stale);
 
 #endif // DISPLAY_H
