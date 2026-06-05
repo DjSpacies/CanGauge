@@ -8,8 +8,8 @@
 
 // ============================================================================
 // DRIVER INSTANCE
-// U8G2_SSD1306_128X64_NONAME_1_4W_HW_SPI — "_1_" = page buffer (~128 bytes)
-// Hardware SPI uses the Nano's MOSI (pin 11), SCK (pin 13) automatically.
+// "_1_" suffix = page-buffer mode (~128 bytes RAM vs 1024 for full buffer).
+// Hardware SPI uses Nano pins: MOSI = 11, SCK = 13 (automatic, no define).
 // ============================================================================
 static U8G2_SSD1306_128X64_NONAME_1_4W_HW_SPI oled(
     U8G2_R0,
@@ -39,7 +39,7 @@ static void formatValue(char* buf, uint8_t bufLen, float value, uint8_t decimals
     }
 }
 
-// Draw bar chrome inside a U8g2 page loop
+// Draw bar chrome inside a U8g2 page loop iteration.
 static void drawBarChrome() {
     oled.drawHLine(X_PADDING + 3, SCREEN_HEIGHT - 16,
                    SCREEN_WIDTH - ((X_PADDING + 4) * 2) - 1);
@@ -47,7 +47,7 @@ static void drawBarChrome() {
                    SCREEN_WIDTH - ((X_PADDING + 4) * 2) - 1);
 
     for (int x = X_PADDING; x < SCREEN_WIDTH - X_PADDING; x += 4) {
-        bool isEnd = (x == X_PADDING || x == SCREEN_WIDTH - X_PADDING - 4);
+        bool    isEnd   = (x == X_PADDING || x == SCREEN_WIDTH - X_PADDING - 4);
         uint8_t tickTop = isEnd ? 14 : 16;
         uint8_t tickH   = isEnd ? 8  : 6;
         uint8_t tickW   = isEnd ? 2  : 1;
@@ -66,7 +66,7 @@ static void drawBarFill(uint8_t barPixels) {
 }
 
 // ============================================================================
-// PUBLIC INTERFACE IMPLEMENTATIONS
+// PUBLIC INTERFACE
 // ============================================================================
 
 void displayInit() {
@@ -74,6 +74,7 @@ void displayInit() {
     oled.setContrast(200);
     oled.clearBuffer();
     oled.sendBuffer();
+    Serial.println(F("SSD1306 SPI OK"));
 }
 
 void displaySplash() {
@@ -81,7 +82,6 @@ void displaySplash() {
     for (int i = 0; i < epd_bitmap_allArray_LEN; i++) {
         oled.firstPage();
         do {
-            // U8g2 uses drawXBMP for PROGMEM bitmaps
             oled.drawXBMP(0, 0, 128, 32, epd_bitmap_allArray[i]);
         } while (oled.nextPage());
         delay(2);
@@ -92,12 +92,12 @@ void displaySplash() {
 }
 
 void displayBarGraph(const char* label,
-                     float value,
-                     float minVal,
-                     float maxVal,
+                     float       value,
+                     float       minVal,
+                     float       maxVal,
                      const char* unit,
-                     uint8_t decimals,
-                     bool stale) {
+                     uint8_t     decimals,
+                     bool        stale) {
 
     uint8_t barPixels = valueToBarPixels(value, minVal, maxVal);
 
@@ -106,7 +106,8 @@ void displayBarGraph(const char* label,
     char line[28];
     snprintf(line, sizeof(line), "%s: %s%s", label, valBuf, unit);
 
-    // U8g2 page loop — each iteration renders one horizontal strip
+    // U8g2 page loop — renders one horizontal strip per iteration.
+    // Each strip is drawn completely fresh — no clear needed, no flicker.
     oled.firstPage();
     do {
         drawBarChrome();
@@ -124,10 +125,10 @@ void displayBarGraph(const char* label,
 }
 
 void displayTextScreen(const char* label,
-                       float value,
+                       float       value,
                        const char* unit,
-                       uint8_t decimals,
-                       bool stale) {
+                       uint8_t     decimals,
+                       bool        stale) {
 
     char valBuf[12];
     formatValue(valBuf, sizeof(valBuf), value, decimals);
@@ -136,11 +137,11 @@ void displayTextScreen(const char* label,
 
     oled.firstPage();
     do {
-        // Small label
+        // Small label at top
         oled.setFont(u8g2_font_6x10_tf);
         oled.drawStr(0, 10, label);
 
-        // Large value — logisoso28 is a clean, readable large font
+        // Large value centred — logisoso28 is clean and very readable
         oled.setFont(u8g2_font_logisoso28_tf);
         uint8_t w = oled.getStrWidth(line);
         oled.drawStr((SCREEN_WIDTH - w) / 2, 58, line);
