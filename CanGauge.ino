@@ -1,458 +1,255 @@
-#include <SPI.h>
-#include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-#include <Encoder.h>
+// ============================================================================
+// CanGauge — Arduino Nano USB-C
+// Hardware: MCP2515 CAN (SPI), LM2596 PSU
+// Display:  Configurable — I2C SSD1306 (Adafruit) or SPI SSD1306 (U8g2)
+//           Set DISPLAY_DRIVER_I2C or DISPLAY_DRIVER_SPI in config.h
+// Input:    Single push button cycles through all display modes
+// ============================================================================
+
+#include "config.h"
+#include "display.h"
 #include "mcp2515_can.h"
-#include "splash.h"
-#define CAN_2515
 
-const int SPI_CS_PIN = 10;
-const int CAN_INT_PIN = 2;
-//const int GAUGE_PARAMETER_PIN = 3;
-//const int DISPLAY_MODE_PIN = 4;
-//Rotary encoder setup
-const int encoderCLK = 2;
-const int encoderDT = 3;
-const int buttonPin = 4;
-Encoder myEncoder(encoderCLK, encoderDT);
-long encoderPosition = 0;
-boolean lastCLK = LOW;
-volatile boolean buttonState, lastButtonState = LOW;
-unsigned long lastDebounceTime = 0;
-unsigned long debounceDelay = 50;
+// ============================================================================
+// CAN
+// ============================================================================
+mcp2515_can CAN(CAN_CS_PIN);
 
-mcp2515_can CAN(SPI_CS_PIN);
-
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-#define OLED_RESET -1
-#define X_PADDING 8
-
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-
-// Gauge Logic and Params
-enum Parameter { ECT,
-                 OilTemp,
-                 Voltage };
-Parameter currentParam = ECT;
-float tempValue = 0.0;
-float voltValue = 0.0;
-
-//Display Parameters and Sprites
-// Custom bitmaps for "C" and "H"
-// C char
-const unsigned char bitmapC[] PROGMEM = {
-  0x7e,
-  0xff,
-  0xc3,
-  0xc3,
-  0xc0,
-  0xc0,
-  0xc3,
-  0xc3,
-  0xff,
-  0x7e
-};
-// H char
-const unsigned char bitmapH[] PROGMEM = {
-  0xc3,
-  0xc3,
-  0xc3,
-  0xc3,
-  0xff,
-  0xff,
-  0xc3,
-  0xc3,
-  0xc3,
-  0xc3
+// ============================================================================
+// DISPLAY MODES
+// Each mode is a unique combination of parameter + display style.
+// The button cycles through them in order, wrapping back to the first.
+// ============================================================================
+enum DisplayMode : uint8_t {
+    MODE_ECT_BAR = 0,
+    MODE_ECT_TEXT,
+    MODE_OIL_BAR,
+    MODE_OIL_TEXT,
+    MODE_VOLT_BAR,
+    MODE_VOLT_TEXT,
+    MODE_COUNT       // Always last — used for modulo wrap-around
 };
 
-// Routine to draw C and H characters
-void drawBitmap(int x, int y, const unsigned char* bitmap, int width, int height) {
-  display.drawBitmap(x, y, bitmap, width, height, WHITE);
-}
+static DisplayMode currentMode = MODE_ECT_BAR;
 
-// Custom bitmap for temperature sprite
-const unsigned char bitmapBottom[] PROGMEM = {
-  0x08, 0x00,
-  0x0e, 0x00,
-  0x08, 0x00,
-  0x0e, 0x00,
-  0x08, 0x00,
-  0xc8, 0xc0,
-  0x3b, 0x00,
-  0xcc, 0xc0,
-  0x33, 0x00
-};
+// ============================================================================
+// LIVE DATA
+// ============================================================================
+static float ectValue  = 0.0f;
+static float oilValue  = 0.0f;
+static float voltValue = 0.0f;
 
-#define BAR_WIDTH 6      // Width of the bar sprite
-#define BAR_HEIGHT 21    // Height of the bar sprite
-#define GAUGE_LENGTH 19  // Length of the gauge in pixels
-// Bar Graph sprite
-const unsigned char barSprite[] PROGMEM = {
-  0xf8,
-  0x00,
-  0x00,
-  0xf8,
-  0x00,
-  0x00,
-  0xf8,
-  0xf8,
-  0x00,
-  0x00,
-  0xf8,
-  0xf8,
-  0xf8,
-  0x00,
-  0xf8,
-  0xf8,
-  0xf8,
-  0x00,
-  0xf8,
-  0xf8,
-  0xf8
-};
+static unsigned long ectLastUpdate  = 0;
+static unsigned long oilLastUpdate  = 0;
+static unsigned long voltLastUpdate = 0;
 
-// Flag to switch between bar graph and text display
-bool displayAsBar = true;
+// ============================================================================
+// DISPLAY STATE
+// ============================================================================
+static unsigned long lastDisplayUpdate = 0;
+static bool          displayDirty      = true;  // Force draw on first loop
 
-//Cycle through Gauge display variables
-void switchParameter() {
-  currentParam = static_cast<Parameter>((currentParam + 1) % 3);
-}
+// ============================================================================
+// BUTTON STATE
+// ============================================================================
+static uint8_t       buttonLastState   = HIGH;   // INPUT_PULLUP idles HIGH
+static uint8_t       buttonStableState = HIGH;
+static unsigned long buttonDebounceTime = 0;
 
-void drawVerticalBar(int x, int y, const unsigned char* sprite, int width, int height) {
-  display.drawBitmap(x, y, sprite, width, height, WHITE);
-}
+// ============================================================================
+// HELPERS
+// ============================================================================
 
-//Bar Graph Display Mode
-void displayBarGraph(int gaugeValue, float voltValue, Parameter currentParam) {
-  display.clearDisplay();
-  // Draw a solid line at the bottom of the screen (2 pixels high)
-  for (int i = 0; i < 2; ++i) {
-    display.drawFastHLine(X_PADDING + 3, SCREEN_HEIGHT - i - 16, SCREEN_WIDTH - ((X_PADDING + 4) * 2) - 1, WHITE);
-  }
-
-  // Draw second accent line below
-  display.drawFastHLine(X_PADDING + 3, SCREEN_HEIGHT - 14, SCREEN_WIDTH - ((X_PADDING + 4) * 2) - 1, WHITE);
-
-  // Draw varied width and height divisions
-  for (int i = X_PADDING; i < SCREEN_WIDTH - X_PADDING; i += 4) {  // Adjust the increment to preferred spacing
-    if (i == X_PADDING || i == SCREEN_WIDTH - X_PADDING - 4) {     // First and last divisions
-      for (int j = 14; j < 22; ++j) {                              // Adjust the height of the first and last divisions (8 pixels)
-        for (int k = i; k < i + 2; ++k) {                          // Set the width to 2 pixels for the first and last divisions
-          display.drawPixel(k, j, WHITE);
-          display.drawPixel(i, j, WHITE);
-        }
-      }
-    } else {                           // Divisions in between the first and last
-      for (int j = 16; j < 22; ++j) {  // Adjust the height of the divisions in between (6 pixels)
-        display.drawPixel(i, j, WHITE);
-      }
+// Returns true if the data for the current mode has not been updated recently
+static bool isStale(DisplayMode mode) {
+    unsigned long now = millis();
+    switch (mode) {
+        case MODE_ECT_BAR:
+        case MODE_ECT_TEXT:
+            return (now - ectLastUpdate) > CAN_DATA_TIMEOUT;
+        case MODE_OIL_BAR:
+        case MODE_OIL_TEXT:
+            return (now - oilLastUpdate) > CAN_DATA_TIMEOUT;
+        case MODE_VOLT_BAR:
+        case MODE_VOLT_TEXT:
+            return (now - voltLastUpdate) > CAN_DATA_TIMEOUT;
+        default:
+            return false;
     }
-  }
-  // Draw the custom bitmaps "C" and "H"
-  drawBitmap(X_PADDING - 2, 2, bitmapC, 8, 10);                 // Adjust the position and size as needed
-  drawBitmap(SCREEN_WIDTH - 8 - X_PADDING, 2, bitmapH, 8, 10);  // Adjust the position and size as needed
-
-  // Draw the bitmap for the temperature sprite
-  drawBitmap((SCREEN_WIDTH / 2) - 5, SCREEN_HEIGHT - 10, bitmapBottom, 10, 9);  // Adjust the position and size as needed
-
-  // Draw the gauge bar using the sprite
-  for (int i = 2; i < (currentParam == Voltage ? voltValue / (20 / GAUGE_LENGTH) : gaugeValue / (120 / GAUGE_LENGTH)); i++) {
-
-
-    //gaugeValue / (120 / GAUGE_LENGTH); i++) {
-    drawVerticalBar(i * BAR_WIDTH, 25, barSprite, BAR_WIDTH, BAR_HEIGHT);
-  }
-
-  // Display "(Parameter): (value)" at the top centered
-  display.setTextSize(1);
-  display.setTextColor(WHITE);
-  display.setCursor(20, 4);  // Position for top text
-  switch (currentParam) {
-    case ECT:
-      display.print("ECT: ");
-      display.print(gaugeValue);  // Display the actual ECT value here
-      display.print("C");
-      break;
-    case OilTemp:
-      display.print("Oil Temp: ");
-      display.print(gaugeValue);  // Display the actual Oil Temp value here
-      display.print("C");
-      break;
-    case Voltage:
-      display.print("Volt: ");
-      display.print(voltValue);  // Display the actual Voltage value here
-      display.print("V");
-      break;
-  }
 }
 
-//Text Display Mode
-void displayTextOutput(float tempValue, float voltValue) {
+// ============================================================================
+// CAN PROCESSING
+// Drains up to MAX_MESSAGES_PER_LOOP frames per call — non-blocking.
+// All three parameters are always updated regardless of current display mode
+// so that values are fresh when the user switches modes.
+// ============================================================================
+static void processCAN() {
+    uint8_t msgCount = 0;
+    uint8_t len      = 0;
+    uint8_t buf[8];
 
-  display.clearDisplay();
-  int tempIntValue = int(tempValue);
-  // Display text for the current parameter
-  display.setTextSize(1);
-  display.setTextColor(WHITE);
-  display.setCursor(0, 4);  // Centered position for text
-  switch (currentParam) {
-    case ECT:
+    while (msgCount < MAX_MESSAGES_PER_LOOP && CAN_MSGAVAIL == CAN.checkReceive()) {
+        CAN.readMsgBuf(&len, buf);
+        msgCount++;
 
-      display.print("ECT: ");
-      display.setTextSize(2);       // Larger text size
-      display.setCursor(10, 25);    // Position for the larger text
-      display.print(tempIntValue);  // Display the actual value here
-      display.print("C");
+        if (len < 1) continue;
 
-      break;
+        switch (buf[0]) {
 
-    case OilTemp:
-      display.print("Oil Temp: ");
-      display.setTextSize(2);       // Larger text size
-      display.setCursor(10, 25);    // Position for the larger text
-      display.print(tempIntValue);  // Display the actual value here
-      display.print("C");
-      break;
+            case CAN_MSG_ECT:
+                if (len >= 8) {
+                    uint16_t raw = (uint16_t)buf[6] | ((uint16_t)buf[7] << 8);
+                    float newVal = (float)raw - 50.0f;
+                    if (newVal != ectValue) {
+                        ectValue     = newVal;
+                        displayDirty = true;
+                    }
+                    ectLastUpdate = millis();
+                }
+                break;
 
-    case Voltage:
-      display.print("Voltage: ");
-      display.setTextSize(2);
-      display.setCursor(10, 25);
-      display.print(voltValue);  // Display the actual value here
-      display.print("V");
-      break;
-  }
+            case CAN_MSG_OIL:
+                if (len >= 4) {
+                    uint16_t raw = (uint16_t)buf[2] | ((uint16_t)buf[3] << 8);
+                    float newVal = (float)raw - 50.0f;
+                    if (newVal != oilValue) {
+                        oilValue     = newVal;
+                        displayDirty = true;
+                    }
+                    oilLastUpdate = millis();
+                }
+                break;
+
+            case CAN_MSG_VOLTAGE:
+                if (len >= 6) {
+                    uint16_t raw = (uint16_t)buf[4] | ((uint16_t)buf[5] << 8);
+                    float newVal = raw / 100.0f;
+                    if (newVal != voltValue) {
+                        voltValue    = newVal;
+                        displayDirty = true;
+                    }
+                    voltLastUpdate = millis();
+                }
+                break;
+
+            default:
+                break;
+        }
+    }
 }
 
-void switchParameterForward() {
-  switch (currentParam) {
-    case ECT:
-      currentParam = OilTemp;
-      break;
-    case OilTemp:
-      currentParam = Voltage;
-      break;
-    case Voltage:
-      currentParam = ECT;
-      break;
-    default:
-      break;
-  }
+// ============================================================================
+// BUTTON HANDLING
+// Clean debounce — fires once on the falling edge (press), not on release.
+// ============================================================================
+static void handleButton() {
+    uint8_t reading = digitalRead(BUTTON_PIN);
+
+    if (reading != buttonLastState) {
+        buttonDebounceTime = millis();
+    }
+
+    if ((millis() - buttonDebounceTime) > BUTTON_DEBOUNCE_MS) {
+        if (reading != buttonStableState) {
+            buttonStableState = reading;
+            if (buttonStableState == LOW) {
+                // Confirmed press — advance to next mode
+                currentMode  = (DisplayMode)((currentMode + 1) % MODE_COUNT);
+                displayDirty = true;
+                Serial.print(F("Mode: "));
+                Serial.println(currentMode);
+            }
+        }
+    }
+
+    buttonLastState = reading;
 }
 
-void switchParameterBackward() {
-  switch (currentParam) {
-    case ECT:
-      currentParam = Voltage;
-      break;
-    case OilTemp:
-      currentParam = ECT;
-      break;
-    case Voltage:
-      currentParam = OilTemp;
-      break;
-    default:
-      break;
-  }
+// ============================================================================
+// RENDER
+// Dispatches to the correct display function for the active mode.
+// The display implementation (I2C or SPI) is selected at compile time.
+// ============================================================================
+static void renderDisplay() {
+    bool stale = isStale(currentMode);
+
+    switch (currentMode) {
+        case MODE_ECT_BAR:
+            displayBarGraph("ECT", ectValue,
+                            TEMP_GAUGE_MIN, TEMP_GAUGE_MAX, "C", 0, stale);
+            break;
+        case MODE_ECT_TEXT:
+            displayTextScreen("ECT", ectValue, "C", 0, stale);
+            break;
+        case MODE_OIL_BAR:
+            displayBarGraph("Oil", oilValue,
+                            TEMP_GAUGE_MIN, TEMP_GAUGE_MAX, "C", 0, stale);
+            break;
+        case MODE_OIL_TEXT:
+            displayTextScreen("Oil Temp", oilValue, "C", 0, stale);
+            break;
+        case MODE_VOLT_BAR:
+            displayBarGraph("Volt", voltValue,
+                            VOLT_GAUGE_MIN, VOLT_GAUGE_MAX, "V", 1, stale);
+            break;
+        case MODE_VOLT_TEXT:
+            displayTextScreen("Voltage", voltValue, "V", 1, stale);
+            break;
+        default:
+            break;
+    }
+
+    displayDirty = false;
 }
 
-
+// ============================================================================
+// SETUP
+// ============================================================================
 void setup() {
-  Serial.begin(9600);
-  while (!Serial)
-    ;
+    Serial.begin(SERIAL_BAUD_RATE);
+    // No while(!Serial) — that blocks forever on Nano without a monitor open
 
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println(F("SSD1306 allocation failed"));
-    for (;;)
-      ;
-  }
-  Serial.println(F("SSD1306 allocation success"));
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
 
-//Initialise CAN with timeout
-#define MAX_CAN_INIT_ATTEMPTS 10
-  int canInitAttempts = 0;
+    // Initialise display and show splash via the abstraction layer
+    displayInit();
+    displaySplash();
 
-  Serial.println("Initializing CAN...");
-  while (canInitAttempts < MAX_CAN_INIT_ATTEMPTS) {
-    if (CAN_OK == CAN.begin(CAN_125KBPS)) {
-      Serial.println("CAN init successful!");
-      break;  // Exit the loop if CAN initialization succeeds
-    } else {
-      Serial.println("CAN init fail, retrying...");
-      delay(100);
-      canInitAttempts++;
-    }
-  }
-
-  if (canInitAttempts >= MAX_CAN_INIT_ATTEMPTS) {
-    Serial.println("CAN initialization unsuccessful after maximum attempts.");
-    // Add any necessary handling or continue program execution
-  } else {
-
-    //pinMode(GAUGE_PARAMETER_PIN, INPUT_PULLUP);  //Toggle Gauge parameter view
-    //pinMode(DISPLAY_MODE_PIN, INPUT_PULLUP);     //Toggle Bar Graph / Text
-    pinMode(buttonPin, INPUT_PULLUP);  //Toggle Bar Graph / Text
-
-    for (int i = 0; i < epd_bitmap_allArray_LEN; ++i) {
-      display.clearDisplay();
-      display.drawBitmap(0, 0, epd_bitmap_allArray[i], 128, 32, WHITE);
-      display.display();
-      delay(2);
+    // Initialise CAN with retries
+    Serial.println(F("Initialising CAN..."));
+    uint8_t attempts = 0;
+    while (attempts < MAX_CAN_INIT_ATTEMPTS) {
+        if (CAN_OK == CAN.begin(CAN_SPEED, CAN_CLOCK)) {
+            Serial.println(F("CAN OK"));
+            break;
+        }
+        Serial.println(F("CAN fail, retrying..."));
+        delay(CAN_INIT_RETRY_DELAY);
+        attempts++;
     }
 
-    /*
-  display.clearDisplay();
-  display.setTextColor(SSD1306_WHITE);
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.println("Initializing...");
-  display.display();
-  delay(500);
-  display.clearDisplay();
-  display.display();
-  */
-  }
+    if (attempts >= MAX_CAN_INIT_ATTEMPTS) {
+        Serial.println(F("CAN init failed after max attempts — continuing"));
+    }
+
+    lastDisplayUpdate = millis();
 }
 
-float processTemperature(unsigned char buf[], int position, const char* paramName, int offset) {
-  unsigned int rawValue = buf[position / 8] | (buf[(position / 8) + 1] << 8);
-  float tempValue = rawValue - offset;
-  Serial.print(paramName);
-  Serial.print(": ");
-  Serial.print(tempValue);
-  Serial.println(" deg C");
-  return tempValue;
-}
-
-float processVoltage(unsigned char buf[], int position, const char* paramName) {
-  unsigned int rawValue = buf[position / 8] | (buf[(position / 8) + 1] << 8);
-  float voltValue = rawValue / 100.0;  // Scale voltage
-  Serial.print(paramName);
-  Serial.print(": ");
-  Serial.print(voltValue);
-  Serial.println(" Volts");
-  return voltValue;
-}
-
-
-
-
-
-
+// ============================================================================
+// LOOP
+// ============================================================================
 void loop() {
-  boolean CLK = digitalRead(encoderCLK);
-  boolean DT = digitalRead(encoderDT);
+    // 1. Drain CAN receive buffer — non-blocking
+    processCAN();
 
-  if (CLK != lastCLK) {
-    if (DT != CLK) {
-      encoderPosition++;
-    } else {
-      encoderPosition--;
+    // 2. Check button input
+    handleButton();
+
+    // 3. Redraw display if data changed or the refresh interval has elapsed
+    unsigned long now = millis();
+    if (displayDirty || (now - lastDisplayUpdate) >= DISPLAY_UPDATE_INTERVAL) {
+        renderDisplay();
+        lastDisplayUpdate = now;
     }
-    Serial.print("Encoder Position: ");
-    Serial.println(encoderPosition);
-    if (encoderPosition > 0) {
-      switchParameterForward();
-      Serial.println("Switching to next parameter");
-      encoderPosition = 0;  // Reset encoder position
-    } else if (encoderPosition < 0) {
-      switchParameterBackward();
-      Serial.println("Switching to previous parameter");
-      encoderPosition = 0;  // Reset encoder position
-    }
-  }
-  lastCLK = CLK;
-
-  // Read the button state with debounce
-  int reading = digitalRead(buttonPin);
-  if (reading != lastButtonState) {
-    lastDebounceTime = millis();
-  }
-
-  if ((millis() - lastDebounceTime) > debounceDelay) {
-    if (reading != buttonState) {
-      buttonState = reading;
-      if (buttonState == HIGH) {
-        Serial.println("Button is released");
-      } else {
-        displayAsBar = !displayAsBar;  // Toggle the display mode
-        Serial.println("Button is pressed");
-      }
-    }
-  }
-  lastButtonState = reading;
-
-  delay(10);  // Adjust delay as needed
-
-  /*
-  //Gauge parameter switching
-  if (digitalRead(GAUGE_PARAMETER_PIN) == LOW) {
-    delay(100);  // Debouncing delay
-    if (digitalRead(GAUGE_PARAMETER_PIN) == LOW) {
-      switchParameter();
-      Serial.print("Switching to ");
-      Serial.println(currentParam == ECT ? "ECT" : (currentParam == OilTemp ? "Oil Temp" : "Voltage"));
-    }
-    while (digitalRead(GAUGE_PARAMETER_PIN) == LOW)
-      ;  // Wait for button release
-  }
-*/
-
-  /*
-  // Display mode switching
-  if (digitalRead(DISPLAY_MODE_PIN) == LOW) {
-    delay(100);  // Debouncing delay
-    if (digitalRead(DISPLAY_MODE_PIN) == LOW) {
-      displayAsBar = !displayAsBar;  // Toggle the display mode
-      Serial.println(displayAsBar ? "Switched to Bar Graph" : "Switched to Text");
-    }
-    while (digitalRead(DISPLAY_MODE_PIN) == LOW)
-      ;  // Wait for button release
-  }
-*/
-
-  //Stream in the desired variablies in via CAN
-
-  unsigned char len = 0;
-  unsigned char buf[8];
-  if (CAN_MSGAVAIL == CAN.checkReceive()) {
-    CAN.readMsgBuf(&len, buf);
-    switch (currentParam) {
-      case ECT:
-        if (buf[0] == 2) {
-          tempValue = processTemperature(buf, 55, "ECT", 50);  // Store the returned temperature value
-        }
-        break;
-
-      case OilTemp:
-        if (buf[0] == 8) {
-          tempValue = processTemperature(buf, 23, "Oil Temp", 50);
-        }
-        break;
-
-      case Voltage:
-        if (buf[0] == 3) {
-          voltValue = processVoltage(buf, 39, "Voltage");
-        }
-        break;
-
-      default:
-        break;
-    }
-
-    // Display logic based on chosen display type
-
-    if (displayAsBar) {
-      displayBarGraph(tempValue, voltValue, currentParam);
-    } else {
-      displayTextOutput(tempValue, voltValue);
-    }
-    //Update the display
-    display.display();
-  }
 }
