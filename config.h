@@ -68,7 +68,7 @@
 // ============================================================================
 
 #define CAN_SPEED              CAN_250KBPS   // Link G4+ bus speed
-#define CAN_CLOCK              MCP_16MHz     // 16MHz crystal on most MCP2515 boards
+#define CAN_CLOCK              MCP_8MHz     // 8MHz crystal verified
 #define MAX_CAN_INIT_ATTEMPTS  10
 #define CAN_INIT_RETRY_DELAY   100
 #define MAX_MESSAGES_PER_LOOP  10
