@@ -40,8 +40,8 @@ static void formatValue(char* buf, uint8_t bufLen, float value, uint8_t decimals
     }
 }
 
-// Draw bar chrome inside a U8g2 page loop iteration.
-static void drawBarChrome() {
+// Draw bar chrome. showEnds = draw the C/H cold/hot markers (temperature only).
+static void drawBarChrome(bool showEnds) {
     oled.drawHLine(X_PADDING + 3, SCREEN_HEIGHT - 16,
                    SCREEN_WIDTH - ((X_PADDING + 4) * 2) - 1);
     oled.drawHLine(X_PADDING + 3, SCREEN_HEIGHT - 14,
@@ -55,21 +55,19 @@ static void drawBarChrome() {
         oled.drawBox(x, tickTop, tickW, tickH);
     }
 
-    // C / H end markers (font glyphs — the 6x10 font is already loaded, so
-    // these cost no extra flash, unlike restoring the custom bitmapC/bitmapH).
-    oled.setFont(u8g2_font_6x10_tf);
-    oled.drawStr(X_PADDING - 6, 12, "C");
-    oled.drawStr(SCREEN_WIDTH - X_PADDING - 2, 12, "H");
+    if (showEnds) {
+        oled.setFont(u8g2_font_6x10_tf);
+        oled.drawStr(X_PADDING - 6, 12, "C");
+        oled.drawStr(SCREEN_WIDTH - X_PADDING - 2, 12, "H");
+    }
 
-    // Centre marker sprite — restored from the original dash design.
-    // drawBitmap is MSB-first, matching the original Adafruit byte order.
-    oled.drawBitmap((SCREEN_WIDTH / 2) - 5, SCREEN_HEIGHT - 10, 2, 9, bitmapBottom);
+    // Centre marker sprite (XBM, drawn LSB-first).
+    oled.drawXBMP((SCREEN_WIDTH / 2) - 5, SCREEN_HEIGHT - 10, 10, 9, bitmapBottom);
 }
 
 static void drawBarFill(uint8_t barPixels) {
-    // Repeated textured sprite (was solid drawBox before optimisation).
     for (uint8_t i = 2; i < barPixels; i++) {
-        oled.drawBitmap(i * BAR_WIDTH, 25, 1, BAR_HEIGHT, barSprite);
+        oled.drawXBMP(i * BAR_WIDTH, 25, BAR_WIDTH, BAR_HEIGHT, barSprite);
     }
 }
 
@@ -109,6 +107,9 @@ void displayBarGraph(const char* label,
 
     uint8_t barPixels = valueToBarPixels(value, minVal, maxVal);
 
+    // Show C/H end markers only for temperature gauges (unit C or F).
+    bool isTemp = (unit && (unit[0] == 'C' || unit[0] == 'F'));
+
     char valBuf[12];
     formatValue(valBuf, sizeof(valBuf), value, decimals);
     char line[28];
@@ -116,12 +117,14 @@ void displayBarGraph(const char* label,
 
     oled.firstPage();
     do {
-        drawBarChrome();
+        drawBarChrome(isTemp);
         drawBarFill(barPixels);
 
-        oled.setFont(u8g2_font_6x10_tf);
+        // 5x7 font for the title — already loaded (no extra flash) and has
+        // cleaner punctuation than 6x10. Revert to 6x10 if you prefer.
+        oled.setFont(u8g2_font_5x7_tf);
         uint8_t w = oled.getStrWidth(line);
-        oled.drawStr((SCREEN_WIDTH - w) / 2, 10, line);
+        oled.drawStr((SCREEN_WIDTH - w) / 2, 9, line);
 
         if (stale) {
             oled.setFont(u8g2_font_5x7_tf);

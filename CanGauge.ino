@@ -183,20 +183,6 @@ static void processCAN() {
         CAN.readMsgBuf(&len, buf);
         unsigned long canId = CAN.getCanId();
         msgCount++;
-        
-        // ---- TEMPORARY RX DEBUG (remove for final build) ----
-        Serial.print(F("RX ID="));
-        Serial.print(canId);
-        Serial.print(F(" LEN="));
-        Serial.print(len);
-        Serial.print(F(" DATA="));
-        for (uint8_t i = 0; i < len; i++) {
-            if (buf[i] < 0x10) Serial.print('0');
-            Serial.print(buf[i], HEX);
-            Serial.print(' ');
-        }
-        Serial.println();
-        // ------------------------------------------------------
 
         switch (canId) {
 
