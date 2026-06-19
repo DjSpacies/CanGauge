@@ -4,8 +4,8 @@
 // ============================================================================
 // DISPLAY DRIVER SELECTION — uncomment exactly one
 // ============================================================================
-#define DISPLAY_DRIVER_I2C   // Adafruit SSD1306 over I2C
-// #define DISPLAY_DRIVER_SPI   // U8g2 SSD1306 over hardware SPI
+// #define DISPLAY_DRIVER_I2C   // Adafruit SSD1306 over I2C
+#define DISPLAY_DRIVER_SPI   // U8g2 SSD1306 over hardware SPI
 
 #if defined(DISPLAY_DRIVER_I2C) && defined(DISPLAY_DRIVER_SPI)
   #error "Only one display driver may be selected at a time."
@@ -67,20 +67,25 @@
 // CAN BUS
 // ============================================================================
 
-#define CAN_SPEED              CAN_125KBPS
+#define CAN_SPEED              CAN_250KBPS   // Link G4+ bus speed
 #define CAN_CLOCK              MCP_16MHz     // 16MHz crystal on most MCP2515 boards
 #define MAX_CAN_INIT_ATTEMPTS  10
-#define CAN_INIT_RETRY_DELAY   100           // ms between init retries
-#define MAX_MESSAGES_PER_LOOP  10            // Max CAN frames drained per loop
-#define CAN_DATA_TIMEOUT       3000          // ms before a value is shown as stale
+#define CAN_INIT_RETRY_DELAY   100
+#define MAX_MESSAGES_PER_LOOP  10
+#define CAN_DATA_TIMEOUT       3000
 
 // ============================================================================
-// CAN MESSAGE IDs (first byte of your CAN packets)
+// CAN STREAM IDs (Link G4+ CAN, decimal — standard 11-bit)
+//   1010 (0x3F2): rpm | mgp | ect | iat
+//   1011 (0x3F3): batt voltage | wheel speed | oil pressure | lambda1
+//   1012 (0x3F4): %ethanol | gear | oil temp | aux11 | knock | dig in 3
+//   1013 (0x3F5): ap (main) | fuel pressure
 // ============================================================================
 
-#define CAN_MSG_ECT      2
-#define CAN_MSG_VOLTAGE  3
-#define CAN_MSG_OIL      8
+#define CAN_ID_STREAM1   1010
+#define CAN_ID_STREAM2   1011
+#define CAN_ID_STREAM3   1012
+#define CAN_ID_STREAM4   1013
 
 // ============================================================================
 // GAUGE DISPLAY RANGES
@@ -106,6 +111,6 @@
 // FEATURE FLAGS
 // ============================================================================
 
-#define ENABLE_SPLASH_SCREEN  true
+#define ENABLE_SPLASH_SCREEN  false
 
 #endif // CONFIG_H

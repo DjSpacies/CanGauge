@@ -7,6 +7,7 @@
 //              Short press (< BUTTON_LONG_PRESS_MS) — next parameter
 //              Long press  (≥ BUTTON_LONG_PRESS_MS) — toggle bar / text
 // Parameters: ECT, Oil Temp, Voltage
+// CAN      : Link G4+ — 250kbps, streams on IDs 1010-1013, MSB first
 // ============================================================================
 
 #include "config.h"
@@ -162,8 +163,16 @@ static bool isStale() {
 // ============================================================================
 // CAN PROCESSING
 // Drains up to MAX_MESSAGES_PER_LOOP frames per call.
-// All three parameters are always updated regardless of what is displayed,
-// so values are current the moment the user switches to them.
+//
+// Link G4+ CAN streams (250kbps, MSB first / big-endian):
+//   ID 1010 (Stream 1): rpm | mgp | ECT | iat        -> ECT at bytes 4,5
+//   ID 1011 (Stream 2): batt V | wheel | oil P | l1  -> Voltage at bytes 0,1
+//   ID 1012 (Stream 3): eth | gear | OIL TEMP | ...  -> Oil temp at byte 2 (8-bit)
+//   ID 1013 (Stream 4): ap (main) | fuel pressure    -> (unused for now)
+//
+// Frames are identified by arbitration ID via CAN.getCanId(). All tracked
+// parameters are always updated regardless of what is displayed, so values
+// are current the moment the user switches to them.
 // ============================================================================
 static void processCAN() {
     uint8_t msgCount = 0;
@@ -172,46 +181,58 @@ static void processCAN() {
 
     while (msgCount < MAX_MESSAGES_PER_LOOP && CAN_MSGAVAIL == CAN.checkReceive()) {
         CAN.readMsgBuf(&len, buf);
+        unsigned long canId = CAN.getCanId();
         msgCount++;
+        
+        // ---- TEMPORARY RX DEBUG (remove for final build) ----
+        Serial.print(F("RX ID="));
+        Serial.print(canId);
+        Serial.print(F(" LEN="));
+        Serial.print(len);
+        Serial.print(F(" DATA="));
+        for (uint8_t i = 0; i < len; i++) {
+            if (buf[i] < 0x10) Serial.print('0');
+            Serial.print(buf[i], HEX);
+            Serial.print(' ');
+        }
+        Serial.println();
+        // ------------------------------------------------------
 
-        if (len < 1) continue;
+        switch (canId) {
 
-        switch (buf[0]) {
-
-            case CAN_MSG_ECT:
-                if (len >= 8) {
-                    uint16_t raw    = (uint16_t)buf[6] | ((uint16_t)buf[7] << 8);
+            case CAN_ID_STREAM1:                       // ECT @ bits 32-47 (bytes 4,5)
+                if (len >= 6) {
+                    uint16_t raw    = ((uint16_t)buf[4] << 8) | buf[5];
                     float    newVal = (float)raw - 50.0f;
                     if (newVal != ectValue) {
-                        ectValue     = newVal;
-                        // Only mark dirty if this is the parameter being shown
+                        ectValue = newVal;
                         if (currentParam == PARAM_ECT) displayDirty = true;
                     }
                     ectLastUpdate = millis();
                 }
                 break;
 
-            case CAN_MSG_OIL:
-                if (len >= 4) {
-                    uint16_t raw    = (uint16_t)buf[2] | ((uint16_t)buf[3] << 8);
-                    float    newVal = (float)raw - 50.0f;
-                    if (newVal != oilValue) {
-                        oilValue     = newVal;
-                        if (currentParam == PARAM_OIL) displayDirty = true;
-                    }
-                    oilLastUpdate = millis();
-                }
-                break;
-
-            case CAN_MSG_VOLTAGE:
-                if (len >= 6) {
-                    uint16_t raw    = (uint16_t)buf[4] | ((uint16_t)buf[5] << 8);
+            case CAN_ID_STREAM2:                       // Voltage @ bits 0-15 (bytes 0,1)
+                if (len >= 2) {
+                    uint16_t raw    = ((uint16_t)buf[0] << 8) | buf[1];
                     float    newVal = raw / 100.0f;
                     if (newVal != voltValue) {
-                        voltValue    = newVal;
+                        voltValue = newVal;
                         if (currentParam == PARAM_VOLT) displayDirty = true;
                     }
                     voltLastUpdate = millis();
+                }
+                break;
+
+            case CAN_ID_STREAM3:                       // Oil temp @ bits 16-23 (byte 2, 8-bit)
+                if (len >= 3) {
+                    uint16_t raw    = buf[2];
+                    float    newVal = (float)raw - 50.0f;
+                    if (newVal != oilValue) {
+                        oilValue = newVal;
+                        if (currentParam == PARAM_OIL) displayDirty = true;
+                    }
+                    oilLastUpdate = millis();
                 }
                 break;
 
