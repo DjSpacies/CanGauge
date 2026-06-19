@@ -3,6 +3,7 @@
 
 #include "display.h"
 #include "splash.h"
+#include "sprites.h"          // <-- recovered dash sprites
 #include <SPI.h>
 #include <U8g2lib.h>
 
@@ -54,14 +55,21 @@ static void drawBarChrome() {
         oled.drawBox(x, tickTop, tickW, tickH);
     }
 
+    // C / H end markers (font glyphs — the 6x10 font is already loaded, so
+    // these cost no extra flash, unlike restoring the custom bitmapC/bitmapH).
     oled.setFont(u8g2_font_6x10_tf);
     oled.drawStr(X_PADDING - 6, 12, "C");
     oled.drawStr(SCREEN_WIDTH - X_PADDING - 2, 12, "H");
+
+    // Centre marker sprite — restored from the original dash design.
+    // drawBitmap is MSB-first, matching the original Adafruit byte order.
+    oled.drawBitmap((SCREEN_WIDTH / 2) - 5, SCREEN_HEIGHT - 10, 2, 9, bitmapBottom);
 }
 
 static void drawBarFill(uint8_t barPixels) {
+    // Repeated textured sprite (was solid drawBox before optimisation).
     for (uint8_t i = 2; i < barPixels; i++) {
-        oled.drawBox(i * BAR_WIDTH, 25, BAR_WIDTH - 1, BAR_HEIGHT);
+        oled.drawBitmap(i * BAR_WIDTH, 25, 1, BAR_HEIGHT, barSprite);
     }
 }
 
@@ -106,8 +114,6 @@ void displayBarGraph(const char* label,
     char line[28];
     snprintf(line, sizeof(line), "%s: %s%s", label, valBuf, unit);
 
-    // U8g2 page loop — renders one horizontal strip per iteration.
-    // Each strip is drawn completely fresh — no clear needed, no flicker.
     oled.firstPage();
     do {
         drawBarChrome();
@@ -137,11 +143,9 @@ void displayTextScreen(const char* label,
 
     oled.firstPage();
     do {
-        // Small label at top
         oled.setFont(u8g2_font_6x10_tf);
         oled.drawStr(0, 10, label);
 
-        // Large value centred — logisoso28 is clean and very readable
         oled.setFont(u8g2_font_logisoso28_tf);
         uint8_t w = oled.getStrWidth(line);
         oled.drawStr((SCREEN_WIDTH - w) / 2, 58, line);
