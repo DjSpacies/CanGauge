@@ -41,7 +41,7 @@ static void formatValue(char* buf, uint8_t bufLen, float value, uint8_t decimals
 }
 
 // Draw bar chrome. showEnds = draw the C/H cold/hot markers (temperature only).
-static void drawBarChrome(bool showEnds) {
+static void drawBarChrome(bool isTemp) {
     oled.drawHLine(X_PADDING + 3, SCREEN_HEIGHT - 16,
                    SCREEN_WIDTH - ((X_PADDING + 4) * 2) - 1);
     oled.drawHLine(X_PADDING + 3, SCREEN_HEIGHT - 14,
@@ -55,19 +55,37 @@ static void drawBarChrome(bool showEnds) {
         oled.drawBox(x, tickTop, tickW, tickH);
     }
 
-    if (showEnds) {
+    if (isTemp) {
         oled.setFont(u8g2_font_6x10_tf);
         oled.drawStr(X_PADDING - 6, 12, "C");
         oled.drawStr(SCREEN_WIDTH - X_PADDING - 2, 12, "H");
+        oled.drawXBMP((SCREEN_WIDTH / 2) - 5, SCREEN_HEIGHT - 10, 10, 9, bitmapBottom);
     }
-
-    // Centre marker sprite (XBM, drawn LSB-first).
-    oled.drawXBMP((SCREEN_WIDTH / 2) - 5, SCREEN_HEIGHT - 10, 10, 9, bitmapBottom);
 }
 
 static void drawBarFill(uint8_t barPixels) {
     for (uint8_t i = 2; i < barPixels; i++) {
         oled.drawXBMP(i * BAR_WIDTH, 25, BAR_WIDTH, BAR_HEIGHT, barSprite);
+    }
+}
+
+// Draws a string in 6x10 font, but renders ':' and '.' as minimal dots
+// instead of the font's chunky cross-shaped glyphs. Fixed 6px advance.
+static void drawCleanStr(int x, int y, const char* s) {
+    oled.setFont(u8g2_font_6x10_tf);
+    char tmp[2] = {0, 0};
+    while (*s) {
+        if (*s == ':') {
+            oled.drawPixel(x + 2, y - 5);
+            oled.drawPixel(x + 2, y - 3);
+        } else if (*s == '.') {
+            oled.drawPixel(x + 2, y - 1);
+        } else {
+            tmp[0] = *s;
+            oled.drawStr(x, y, tmp);
+        }
+        x += 6;
+        s++;
     }
 }
 
@@ -122,9 +140,8 @@ void displayBarGraph(const char* label,
 
         // 5x7 font for the title — already loaded (no extra flash) and has
         // cleaner punctuation than 6x10. Revert to 6x10 if you prefer.
-        oled.setFont(u8g2_font_5x7_tf);
-        uint8_t w = oled.getStrWidth(line);
-        oled.drawStr((SCREEN_WIDTH - w) / 2, 9, line);
+        uint8_t w = strlen(line) * 6;          // 6x10 is fixed-width
+        drawCleanStr((SCREEN_WIDTH - w) / 2, 10, line);
 
         if (stale) {
             oled.setFont(u8g2_font_5x7_tf);

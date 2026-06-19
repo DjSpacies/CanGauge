@@ -101,6 +101,12 @@
 #define BAR_HEIGHT       21
 #define GAUGE_LENGTH     19
 
+// AP (accelerator position) — TEMPORARY latency-test parameter.
+// Comment out the line below to strip AP entirely from the final build.
+#define ENABLE_AP_PARAM
+#define AP_GAUGE_MIN   0.0f
+#define AP_GAUGE_MAX   100.0f
+
 // ============================================================================
 // SERIAL
 // ============================================================================

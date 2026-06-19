@@ -29,6 +29,9 @@ enum Parameter : uint8_t {
     PARAM_ECT = 0,
     PARAM_OIL,
     PARAM_VOLT,
+#ifdef ENABLE_AP_PARAM
+    PARAM_AP,
+#endif
     PARAM_COUNT
 };
 
@@ -46,6 +49,11 @@ static DisplayType  currentDisp  = DISP_BAR;
 static float ectValue  = 0.0f;
 static float oilValue  = 0.0f;
 static float voltValue = 0.0f;
+
+#ifdef ENABLE_AP_PARAM
+static float apValue   = 0.0f;
+static unsigned long apLastUpdate = 0;
+#endif
 
 static unsigned long ectLastUpdate  = 0;
 static unsigned long oilLastUpdate  = 0;
@@ -131,6 +139,9 @@ static void handleButton() {
                     case PARAM_ECT:  Serial.println(F("ECT"));     break;
                     case PARAM_OIL:  Serial.println(F("Oil"));     break;
                     case PARAM_VOLT: Serial.println(F("Voltage")); break;
+                    #ifdef ENABLE_AP_PARAM
+                        case PARAM_AP:   Serial.println(F("AP"));      break;
+                    #endif
                     default: break;
                 }
             }
@@ -222,6 +233,22 @@ static void processCAN() {
                 }
                 break;
 
+            #ifdef ENABLE_AP_PARAM
+                        case CAN_ID_STREAM4:                   // AP @ bits 0-15 (bytes 0,1)
+                            if (len >= 2) {
+                                uint16_t raw    = ((uint16_t)buf[0] << 8) | buf[1];
+                                float    newVal = raw / 10.0f;     // 0.1% resolution
+                                if (newVal != apValue) {
+                                    apValue = newVal;
+                                    if (currentParam == PARAM_AP) displayDirty = true;
+                                }
+                                apLastUpdate = millis();
+                            }
+                            break;
+            #endif
+
+
+
             default:
                 break;
         }
@@ -264,6 +291,17 @@ static void renderDisplay() {
                 displayTextScreen("Voltage", voltValue, "V", 1, stale);
             }
             break;
+
+        #ifdef ENABLE_AP_PARAM
+                case PARAM_AP:
+                    if (currentDisp == DISP_BAR) {
+                        displayBarGraph("AP", apValue,
+                                        AP_GAUGE_MIN, AP_GAUGE_MAX, "%", 0, stale);
+                    } else {
+                        displayTextScreen("AP", apValue, "%", 0, stale);
+                    }
+                    break;
+        #endif
 
         default:
             break;
