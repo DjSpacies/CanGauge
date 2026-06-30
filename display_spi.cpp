@@ -2,8 +2,7 @@
 #ifdef DISPLAY_DRIVER_SPI
 
 #include "display.h"
-#include "splash.h"
-#include "sprites.h"          // <-- recovered dash sprites
+#include "sprites.h"
 #include <SPI.h>
 #include <U8g2lib.h>
 
@@ -101,20 +100,6 @@ void displayInit() {
     Serial.println(F("SSD1306 SPI OK"));
 }
 
-void displaySplash() {
-#if ENABLE_SPLASH_SCREEN
-    for (int i = 0; i < epd_bitmap_allArray_LEN; i++) {
-        oled.firstPage();
-        do {
-            oled.drawXBMP(0, 0, 128, 32, epd_bitmap_allArray[i]);
-        } while (oled.nextPage());
-        delay(2);
-    }
-    oled.clearBuffer();
-    oled.sendBuffer();
-#endif
-}
-
 void displayBarGraph(const char* label,
                      float       value,
                      float       minVal,
@@ -144,7 +129,7 @@ void displayBarGraph(const char* label,
         drawCleanStr((SCREEN_WIDTH - w) / 2, 10, line);
 
         if (stale) {
-            oled.setFont(u8g2_font_5x7_tf);
+            oled.setFont(u8g2_font_6x10_tf);
             oled.drawStr(0, SCREEN_HEIGHT - 1, "NO DATA");
         }
     } while (oled.nextPage());
@@ -158,20 +143,30 @@ void displayTextScreen(const char* label,
 
     char valBuf[12];
     formatValue(valBuf, sizeof(valBuf), value, decimals);
-    char line[20];
-    snprintf(line, sizeof(line), "%s%s", valBuf, unit);
 
     oled.firstPage();
     do {
+        // Small label at top
         oled.setFont(u8g2_font_6x10_tf);
         oled.drawStr(0, 10, label);
 
-        oled.setFont(u8g2_font_logisoso28_tf);
-        uint8_t w = oled.getStrWidth(line);
-        oled.drawStr((SCREEN_WIDTH - w) / 2, 58, line);
+        // Big number in the number-only font (no letters = much smaller).
+        oled.setFont(u8g2_font_logisoso28_tn);
+        uint8_t numW = oled.getStrWidth(valBuf);
+
+        // Unit in the small font, measured for combined centring.
+        oled.setFont(u8g2_font_6x10_tf);
+        uint8_t unitW  = oled.getStrWidth(unit);
+        uint8_t totalW = numW + 2 + unitW;
+        uint8_t startX = (SCREEN_WIDTH - totalW) / 2;
+
+        oled.setFont(u8g2_font_logisoso28_tn);
+        oled.drawStr(startX, 58, valBuf);
+
+        oled.setFont(u8g2_font_6x10_tf);
+        oled.drawStr(startX + numW + 2, 58, unit);
 
         if (stale) {
-            oled.setFont(u8g2_font_5x7_tf);
             oled.drawStr(0, SCREEN_HEIGHT - 1, "NO DATA");
         }
     } while (oled.nextPage());
