@@ -321,7 +321,6 @@ void setup() {
     pinMode(BUTTON_PIN, INPUT_PULLUP);
 
     displayInit();
-    displaySplash();
 
     Serial.println(F("Initialising CAN..."));
     uint8_t attempts = 0;
