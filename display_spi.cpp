@@ -30,13 +30,23 @@ static uint8_t valueToBarPixels(float value, float minVal, float maxVal) {
 
 static void formatValue(char* buf, uint8_t bufLen, float value, uint8_t decimals) {
     if (decimals == 0) {
-        snprintf(buf, bufLen, "%d", (int)value);
+        itoa((int)value, buf, 10);   // (snprintf avoided: pulls in all of vfprintf)
     } else {
         dtostrf(value, 4, decimals, buf);
         char* p = buf;
         while (*p == ' ') p++;
         if (p != buf) memmove(buf, p, strlen(p) + 1);
     }
+}
+
+// "label: value" + unit, e.g. "Oil max: 98C". Plain string ops, bounds-checked.
+static void buildLine(char* dst, uint8_t cap, const char* label,
+                      const char* value, const char* unit) {
+    dst[0] = 0;
+    strncat(dst, label, cap - 1);
+    strncat(dst, ": ",  cap - 1 - strlen(dst));
+    strncat(dst, value, cap - 1 - strlen(dst));
+    strncat(dst, unit,  cap - 1 - strlen(dst));
 }
 
 // Draw bar chrome. showEnds = draw the C/H cold/hot markers (temperature only).
@@ -140,27 +150,29 @@ void displaySetShiftBar(uint8_t widthPx) {
     shiftBarPx = (widthPx > SCREEN_WIDTH) ? SCREEN_WIDTH : widthPx;
 }
 
-void displayShiftMenu(uint16_t rpm) {
-    char valBuf[8];
-    snprintf(valBuf, sizeof(valBuf), "%u", rpm);
+static void drawMenuHint(bool last) {
+    oled.setFont(u8g2_font_6x10_tf);
+    oled.drawStr(0, SCREEN_HEIGHT - 1, last ? "A- B+ hold A=X B=OK" : "A- B+ hold A=X B=NEXT");
+}
 
+void displayMenuValue(const char* title, const char* value, const char* unit, bool last) {
     oled.firstPage();
     do {
         oled.setFont(u8g2_font_6x10_tf);
-        oled.drawStr(0, 10, "SHIFT POINT");
+        oled.drawStr(0, 10, title);
 
         oled.setFont(u8g2_font_logisoso28_tn);
-        uint8_t numW = oled.getStrWidth(valBuf);
+        uint8_t numW = oled.getStrWidth(value);
         oled.setFont(u8g2_font_6x10_tf);
-        uint8_t totalW = numW + 2 + 18;  // number + gap + "rpm"
+        uint8_t totalW = numW + 2 + oled.getStrWidth(unit);
         uint8_t startX = (SCREEN_WIDTH - totalW) / 2;
 
         oled.setFont(u8g2_font_logisoso28_tn);
-        oled.drawStr(startX, 46, valBuf);
+        oled.drawStr(startX, 46, value);
         oled.setFont(u8g2_font_6x10_tf);
-        oled.drawStr(startX + numW + 2, 46, "rpm");
+        oled.drawStr(startX + numW + 2, 46, unit);
 
-        oled.drawStr(0, SCREEN_HEIGHT - 1, "A- B+ hold A=X B=NEXT");
+        drawMenuHint(last);
         drawShiftOverlay();
     } while (oled.nextPage());
 }
@@ -212,7 +224,7 @@ void displayBarGraph(const char* label,
     char valBuf[12];
     formatValue(valBuf, sizeof(valBuf), value, decimals);
     char line[28];
-    snprintf(line, sizeof(line), "%s: %s%s", label, valBuf, unit);
+    buildLine(line, sizeof(line), label, valBuf, unit);
 
     oled.firstPage();
     do {
@@ -252,7 +264,7 @@ void displayBoostBar(const char* label,
     char valBuf[12];
     formatValue(valBuf, sizeof(valBuf), shown, decimals);
     char line[28];
-    snprintf(line, sizeof(line), "%s: %s%s", label, valBuf, unit);
+    buildLine(line, sizeof(line), label, valBuf, unit);
 
     oled.firstPage();
     do {
@@ -282,7 +294,7 @@ void displayBoostBar(const char* label,
     } while (oled.nextPage());
 }
 
-void displayUnitsMenu(uint8_t sel) {
+void displayUnitsMenu(uint8_t sel, bool last) {
     static const char* const names[3] = { "kPa", "bar", "psi / inHg" };
 
     oled.firstPage();
@@ -294,22 +306,31 @@ void displayUnitsMenu(uint8_t sel) {
             if (i == sel) oled.drawStr(0, y, ">");
             oled.drawStr(12, y, names[i]);
         }
-        oled.drawStr(0, SCREEN_HEIGHT - 1, "A< B> hold A=X B=OK");
+        drawMenuHint(last);
         drawShiftOverlay();
     } while (oled.nextPage());
 }
 
-void displayTextScreen(const char* label,
-                       float       value,
-                       const char* unit,
-                       uint8_t     decimals,
-                       bool        stale) {
+// Shared by the normal text screen and the warning screen. inverted = white
+// background with black text (the warning flash).
+static void drawText(const char* label,
+                     float       value,
+                     const char* unit,
+                     uint8_t     decimals,
+                     bool        stale,
+                     bool        inverted) {
 
     char valBuf[12];
     formatValue(valBuf, sizeof(valBuf), value, decimals);
 
     oled.firstPage();
     do {
+        if (inverted) {
+            oled.setDrawColor(1);
+            oled.drawBox(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+            oled.setDrawColor(0);
+        }
+
         // Small label at top
         oled.setFont(u8g2_font_6x10_tf);
         oled.drawStr(0, 10, label);
@@ -333,8 +354,22 @@ void displayTextScreen(const char* label,
         if (stale) {
             oled.drawStr(0, SCREEN_HEIGHT - 1, "NO DATA");
         }
-        drawShiftOverlay();
+        oled.setDrawColor(1);
+        if (!inverted) drawShiftOverlay();
     } while (oled.nextPage());
+}
+
+void displayTextScreen(const char* label,
+                       float       value,
+                       const char* unit,
+                       uint8_t     decimals,
+                       bool        stale) {
+    drawText(label, value, unit, decimals, stale, false);
+}
+
+void displayWarning(const char* label, float value, const char* unit,
+                    uint8_t decimals, bool inverted) {
+    drawText(label, value, unit, decimals, false, inverted);
 }
 
 #endif // DISPLAY_DRIVER_SPI

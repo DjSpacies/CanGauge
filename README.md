@@ -48,6 +48,14 @@ Driven from engine RPM (CAN stream 1) with its own logic, since the gauge consum
 
 For bench testing without a running engine, `SHIFT_TEST_USE_AP` in `config.h` drives the shift light from the accelerator position instead.
 
+### Warnings
+
+ECT, oil temperature and boost each have an over-limit warning: a full-screen flashing alert (e.g. `ECT HIGH 102C`, `OVER BOOST 18.5psi`) that interrupts whatever is showing. The shift light flash takes priority over warnings, and the menu is never interrupted.
+
+- Defaults: ECT 100 C, oil 130 C, boost 124 kPa (about 18 psi). All are adjustable in the menu and stored in EEPROM.
+- A warning clears with hysteresis (3 C / 10 kPa below the limit) and only counts fresh CAN data.
+- Any button press dismisses the warning on screen (and does nothing else). It returns if the condition is still present after 30 seconds, or on the next excursion.
+
 ### Min / max / average
 
 A short press on button B cycles the current screen between live, max, min and average (sampled once a second, reset at power-up). It returns to live after 10 seconds without a button press so a held value is never mistaken for a live one.
@@ -61,7 +69,7 @@ A short press on button B cycles the current screen between live, max, min and a
 | B short | Cycle live / max / min / avg | Increase / next |
 | B long | Open menu | Next item, then save and exit |
 
-Menu items: shift point, then boost units.
+Menu items, in order: shift point, ECT warning, oil warning, boost units, boost warning. B long steps to the next item and saves on the last one; A long cancels.
 
 The last parameter and bar / numerical mode are remembered across power cycles (stored in EEPROM). The menu and min / max / average views are not, so the gauge always boots into a live view.
 

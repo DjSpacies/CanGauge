@@ -69,10 +69,16 @@ void displayBoostBar(const char* label,
                      uint8_t     decimals,
                      bool        stale);
 
-// Boost units menu screen. sel = 0 kPa, 1 bar, 2 psi/inHg.
-void displayUnitsMenu(uint8_t sel);
+// Generic numeric menu screen: small title, big value, unit, button hints.
+// last = this is the final menu item (hint says OK/save rather than NEXT).
+void displayMenuValue(const char* title, const char* value, const char* unit, bool last);
 
-// Shift point menu screen showing the value being edited, with button hints.
-void displayShiftMenu(uint16_t rpm);
+// Boost units menu screen. sel = 0 kPa, 1 bar, 2 psi/inHg.
+void displayUnitsMenu(uint8_t sel, bool last);
+
+// Full-screen warning, e.g. label "ECT HIGH", value 102, unit "C". inverted
+// flips text/background so alternating it produces the flash.
+void displayWarning(const char* label, float value, const char* unit,
+                    uint8_t decimals, bool inverted);
 
 #endif // DISPLAY_H

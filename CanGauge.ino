@@ -7,7 +7,8 @@
 //              A short — next parameter, A long — toggle bar / text
 //              B long  — shift point menu (saved to EEPROM)
 // Shift light: overrides every screen, see SHIFT LIGHT section
-// Parameters: ECT, Oil Temp, Voltage
+// Parameters: ECT, Oil Temp, Voltage, Boost/Vacuum, AP (test)
+// Warnings : ECT / oil over-temp and over-boost, see WARNINGS section
 // CAN      : Link G4+ — 250kbps, streams on IDs 1010-1013, MSB first
 // ============================================================================
 
@@ -78,6 +79,20 @@ static unsigned long oilLastUpdate  = 0;
 static unsigned long voltLastUpdate = 0;
 static unsigned long boostLastUpdate = 0;
 
+// Warning limits (menu-adjustable, EEPROM-backed) and runtime state.
+static uint8_t warnEct   = WARN_ECT_DEFAULT;     // C
+static uint8_t warnOil   = WARN_OIL_DEFAULT;     // C
+static uint8_t warnBoost = WARN_BOOST_DEFAULT;   // kPa gauge
+
+#ifdef ENABLE_WARNINGS
+enum WarnId : uint8_t { W_BOOST = 0, W_ECT, W_OIL, W_COUNT };  // Priority order
+static bool          warnTrip[W_COUNT];    // Over the limit (with hysteresis)
+static bool          warnAcked[W_COUNT];   // Dismissed by a button press
+static unsigned long warnAckAt[W_COUNT];
+static int8_t        warnShown = -1;       // WarnId being displayed, -1 = none
+static bool          warnPhase = false;    // Flash phase (inverted?)
+#endif
+
 #ifdef ENABLE_SHIFT_LIGHT
 static uint16_t      rpmValue      = 0;
 static unsigned long rpmLastUpdate = 0;
@@ -133,9 +148,10 @@ static bool          displayDirty      = true;  // Force first draw
 //
 // Outside the menu:
 //   A short = next parameter, A long = toggle bar/text,
-//   B long  = open settings menu (shift point, boost units) (B short is reserved for min/max hold)
+//   B short = cycle live / max / min / avg, B long = open settings menu
+//   Any button dismisses an on-screen warning (and does nothing else)
 // In the menu:
-//   A short = shift point down, B short = shift point up (wraps at the ends),
+//   A short = value down, B short = value up (wraps at the ends),
 //   B long  = next item / save and exit on the last item,
 //   A long  = cancel and exit
 // ============================================================================
@@ -207,10 +223,16 @@ static ButtonEvent pollButton(Button &b) {
 // Writes use update() so unchanged bytes cost no EEPROM wear.
 // ----------------------------------------------------------------------------
 #define SHIFT_EEPROM_MAGIC 0xC6
+#define WARN_EEPROM_MAGIC  0x3C
+#define MENU_LAST          4         // Index of the final menu item
 
 static bool     menuActive = false;
-static uint8_t  menuItem   = 0;      // 0 = shift point, 1 = boost units
+// Items: 0 shift point, 1 ECT limit, 2 oil limit, 3 boost units, 4 boost limit
+static uint8_t  menuItem   = 0;
 static uint16_t menuRpm    = 0;      // Values being edited (committed on save)
+static uint8_t  menuEct    = 0;
+static uint8_t  menuOil    = 0;
+static uint8_t  menuBoost  = 0;
 static uint8_t  menuUnit   = 0;
 
 static uint8_t shiftChecksum(uint16_t v) {
@@ -220,64 +242,92 @@ static uint8_t shiftChecksum(uint16_t v) {
 static void loadSettings() {
     uint16_t v = EEPROM.read(SHIFT_EEPROM_ADDR + 1) |
                 ((uint16_t)EEPROM.read(SHIFT_EEPROM_ADDR + 2) << 8);
-    bool ok = EEPROM.read(SHIFT_EEPROM_ADDR) == SHIFT_EEPROM_MAGIC &&
-              EEPROM.read(SHIFT_EEPROM_ADDR + 3) == shiftChecksum(v) &&
-              v >= SHIFT_MENU_MIN_RPM && v <= SHIFT_MENU_MAX_RPM;
-    shiftRpm = ok ? v : SHIFT_RPM_DEFAULT;
-    Serial.print(F("Shift point: "));
-    Serial.print(shiftRpm);
-    Serial.println(ok ? F(" (saved)") : F(" (default)"));
+    if (EEPROM.read(SHIFT_EEPROM_ADDR) == SHIFT_EEPROM_MAGIC &&
+        EEPROM.read(SHIFT_EEPROM_ADDR + 3) == shiftChecksum(v) &&
+        v >= SHIFT_MENU_MIN_RPM && v <= SHIFT_MENU_MAX_RPM) {
+        shiftRpm = v;
+    }
 
     // Boost unit: [unit][~unit] pair right after the shift record.
     uint8_t u = EEPROM.read(SHIFT_EEPROM_ADDR + 4);
-    bool uok  = u < UNIT_COUNT && EEPROM.read(SHIFT_EEPROM_ADDR + 5) == (uint8_t)~u;
-    if (uok) boostUnit = u;
-    Serial.print(F("Boost unit: "));
-    Serial.print(boostUnit);
-    Serial.println(uok ? F(" (saved)") : F(" (default)"));
+    if (u < UNIT_COUNT && EEPROM.read(SHIFT_EEPROM_ADDR + 5) == (uint8_t)~u) boostUnit = u;
+
+    // Warning limits: [ect][oil][boost][checksum], all-or-nothing.
+    uint8_t e = EEPROM.read(WARN_EEPROM_ADDR);
+    uint8_t o = EEPROM.read(WARN_EEPROM_ADDR + 1);
+    uint8_t b = EEPROM.read(WARN_EEPROM_ADDR + 2);
+    if (EEPROM.read(WARN_EEPROM_ADDR + 3) == (uint8_t)(WARN_EEPROM_MAGIC ^ e ^ o ^ b) &&
+        e >= WARN_ECT_MIN && e <= WARN_ECT_MAX &&
+        o >= WARN_OIL_MIN && o <= WARN_OIL_MAX &&
+        b >= WARN_BOOST_MIN && b <= WARN_BOOST_MAX) {
+        warnEct = e; warnOil = o; warnBoost = b;
+    }
+
+    Serial.print(F("Cfg: shift ")); Serial.print(shiftRpm);
+    Serial.print(F(" unit "));      Serial.print(boostUnit);
+    Serial.print(F(" warn "));      Serial.print(warnEct);
+    Serial.print('/');              Serial.print(warnOil);
+    Serial.print('/');              Serial.println(warnBoost);
 }
 
-static void saveSettings(uint16_t rpm, uint8_t unit) {
+// Commits the menu's edited values and writes them to EEPROM.
+static void saveSettings() {
+    shiftRpm = menuRpm;  boostUnit = menuUnit;
+    warnEct  = menuEct;  warnOil   = menuOil;  warnBoost = menuBoost;
+
     EEPROM.update(SHIFT_EEPROM_ADDR,     SHIFT_EEPROM_MAGIC);
-    EEPROM.update(SHIFT_EEPROM_ADDR + 1, rpm & 0xFF);
-    EEPROM.update(SHIFT_EEPROM_ADDR + 2, rpm >> 8);
-    EEPROM.update(SHIFT_EEPROM_ADDR + 3, shiftChecksum(rpm));
-    EEPROM.update(SHIFT_EEPROM_ADDR + 4, unit);
-    EEPROM.update(SHIFT_EEPROM_ADDR + 5, (uint8_t)~unit);
-    shiftRpm  = rpm;
-    boostUnit = unit;
+    EEPROM.update(SHIFT_EEPROM_ADDR + 1, shiftRpm & 0xFF);
+    EEPROM.update(SHIFT_EEPROM_ADDR + 2, shiftRpm >> 8);
+    EEPROM.update(SHIFT_EEPROM_ADDR + 3, shiftChecksum(shiftRpm));
+    EEPROM.update(SHIFT_EEPROM_ADDR + 4, boostUnit);
+    EEPROM.update(SHIFT_EEPROM_ADDR + 5, (uint8_t)~boostUnit);
+
+    EEPROM.update(WARN_EEPROM_ADDR,     warnEct);
+    EEPROM.update(WARN_EEPROM_ADDR + 1, warnOil);
+    EEPROM.update(WARN_EEPROM_ADDR + 2, warnBoost);
+    EEPROM.update(WARN_EEPROM_ADDR + 3, (uint8_t)(WARN_EEPROM_MAGIC ^ warnEct ^ warnOil ^ warnBoost));
 }
 
-// Menu items: 0 = shift point, 1 = boost units.
+// v + dir*step, wrapping from max to min (and min to max).
+static int16_t stepWrap(int16_t v, int8_t dir, int16_t mn, int16_t mx, int16_t step) {
+    v += dir * step;
+    if (v > mx) return mn;
+    if (v < mn) return mx;
+    return v;
+}
+
+// Menu items:
 //   A short / B short - adjust the current item (A down/prev, B up/next)
 //   B long            - next item; on the last item saves everything and exits
 //   A long            - cancel (discard all edits) and exit
 static void handleMenu(ButtonEvent a, ButtonEvent b) {
     if (a == BTN_EVT_SHORT || b == BTN_EVT_SHORT) {
-        bool up = (b == BTN_EVT_SHORT);
-        if (menuItem == 0) {
-            if (up) {
-                menuRpm = (menuRpm + SHIFT_MENU_STEP_RPM > SHIFT_MENU_MAX_RPM)
-                              ? SHIFT_MENU_MIN_RPM : menuRpm + SHIFT_MENU_STEP_RPM;
-            } else {
-                menuRpm = (menuRpm < SHIFT_MENU_MIN_RPM + SHIFT_MENU_STEP_RPM)
-                              ? SHIFT_MENU_MAX_RPM : menuRpm - SHIFT_MENU_STEP_RPM;
-            }
-        } else {
-            menuUnit = up ? (menuUnit + 1) % UNIT_COUNT
-                          : (menuUnit + UNIT_COUNT - 1) % UNIT_COUNT;
+        int8_t dir = (b == BTN_EVT_SHORT) ? 1 : -1;
+        switch (menuItem) {
+            case 0: menuRpm  = stepWrap(menuRpm,  dir, SHIFT_MENU_MIN_RPM, SHIFT_MENU_MAX_RPM, SHIFT_MENU_STEP_RPM); break;
+            case 1: menuEct  = stepWrap(menuEct,  dir, WARN_ECT_MIN, WARN_ECT_MAX, WARN_ECT_STEP); break;
+            case 2: menuOil  = stepWrap(menuOil,  dir, WARN_OIL_MIN, WARN_OIL_MAX, WARN_OIL_STEP); break;
+            case 3: menuUnit = (menuUnit + dir + UNIT_COUNT) % UNIT_COUNT; break;
+            default:
+                if (menuUnit == UNIT_PSI) {
+                    // Step whole psi, stored as kPa
+                    int16_t psi = (int16_t)(menuBoost * 0.145038f + 0.5f) + dir;
+                    int16_t kpa = (int16_t)(psi / 0.145038f + 0.5f);
+                    menuBoost = (kpa > WARN_BOOST_MAX) ? WARN_BOOST_MIN
+                              : (kpa < WARN_BOOST_MIN) ? WARN_BOOST_MAX : kpa;
+                } else {
+                    menuBoost = stepWrap(menuBoost, dir, WARN_BOOST_MIN, WARN_BOOST_MAX, WARN_BOOST_STEP_KPA);
+                }
+                break;
         }
         displayDirty = true;
     } else if (b == BTN_EVT_LONG) {
-        if (menuItem == 0) {
-            menuItem = 1;
+        if (menuItem < MENU_LAST) {
+            menuItem++;
         } else {
-            saveSettings(menuRpm, menuUnit);
+            saveSettings();
             menuActive = false;
-            Serial.print(F("Menu: saved shift point "));
-            Serial.print(shiftRpm);
-            Serial.print(F(", boost unit "));
-            Serial.println(boostUnit);
+            Serial.println(F("Menu: saved"));
         }
         displayDirty = true;
     } else if (a == BTN_EVT_LONG) {
@@ -321,11 +371,24 @@ static void handleButtons() {
         handleMenu(a, b);
         return;
     }
+#ifdef ENABLE_WARNINGS
+    // A visible warning is dismissed by any press, which does nothing else.
+    if (warnShown >= 0 && !shiftFlashing &&
+        (a != BTN_EVT_NONE || b != BTN_EVT_NONE)) {
+        warnAcked[warnShown] = true;
+        warnAckAt[warnShown] = millis();
+        displayDirty         = true;
+        return;
+    }
+#endif
     if (b == BTN_EVT_LONG) {
         menuActive   = true;
         menuItem     = 0;
         menuRpm      = shiftRpm;
         menuUnit     = boostUnit;
+        menuEct      = warnEct;
+        menuOil      = warnOil;
+        menuBoost    = warnBoost;
         displayDirty = true;
         Serial.println(F("Menu: open"));
         return;
@@ -544,12 +607,56 @@ static void updateShiftLight() {
 #endif
 
 // ============================================================================
+// WARNINGS
+// Each warning trips when its value reaches the limit and clears once it falls
+// below limit - hysteresis. Only fresh data counts (stale/never-seen = clear).
+// A dismissed warning stays quiet until it clears, or WARN_REALERT_MS passes.
+// warnShown is the highest-priority warning that should be on screen.
+// ============================================================================
+#ifdef ENABLE_WARNINGS
+static void updateWarnings() {
+    unsigned long now   = millis();
+    int8_t        shown = -1;
+
+    for (uint8_t i = 0; i < W_COUNT; i++) {
+        float v, limit, hyst;
+        unsigned long t;
+        switch (i) {
+            case W_BOOST: v = boostKpa; limit = warnBoost; hyst = WARN_HYST_BOOST_KPA; t = boostLastUpdate; break;
+            case W_ECT:   v = ectValue; limit = warnEct;   hyst = WARN_HYST_TEMP;      t = ectLastUpdate;   break;
+            default:      v = oilValue; limit = warnOil;   hyst = WARN_HYST_TEMP;      t = oilLastUpdate;   break;
+        }
+
+        bool fresh = (t != 0) && ((now - t) <= CAN_DATA_TIMEOUT);
+        if (!fresh)                    warnTrip[i] = false;
+        else if (v >= limit)           warnTrip[i] = true;
+        else if (v < limit - hyst)     warnTrip[i] = false;
+
+        if (!warnTrip[i]) warnAcked[i] = false;
+
+        bool active = warnTrip[i] &&
+                      (!warnAcked[i] || (now - warnAckAt[i]) >= WARN_REALERT_MS);
+        if (active && shown < 0) shown = i;
+    }
+
+    bool phase = (shown >= 0) && (((now / WARN_FLASH_HALF_PERIOD_MS) & 1) != 0);
+    if (shown != warnShown || phase != warnPhase) displayDirty = true;
+    if (shown != warnShown) {
+        Serial.print(F("Warning: "));
+        Serial.println(shown);
+    }
+    warnShown = shown;
+    warnPhase = phase;
+}
+#endif
+
+// ============================================================================
 // BOOST UNIT CONVERSION
 // kPa -> display value, unit string and decimals for the selected unit.
 // psi/inHg mode shows boost in psi and vacuum in inHg (negative).
 // ============================================================================
-static void boostConvert(float kpa, float &out, const char* &unit, uint8_t &dec) {
-    switch (boostUnit) {
+static void boostConvert(uint8_t u, float kpa, float &out, const char* &unit, uint8_t &dec) {
+    switch (u) {
         case UNIT_KPA: out = kpa;           unit = "kPa"; dec = 0; break;
         case UNIT_BAR: out = kpa / 100.0f;  unit = "bar"; dec = 2; break;
         default:
@@ -636,6 +743,46 @@ static void updateStats() {
 }
 #endif
 
+#ifdef ENABLE_WARNINGS
+static void renderWarning() {
+    float       shown = 0;
+    const char* label;
+    const char* unit  = "C";
+    uint8_t     dec   = 0;
+    switch (warnShown) {
+        case W_BOOST: label = "OVER BOOST";    boostConvert(boostUnit, boostKpa, shown, unit, dec); break;
+        case W_ECT:   label = "ECT HIGH";      shown = ectValue; break;
+        default:      label = "OIL TEMP HIGH"; shown = oilValue; break;
+    }
+    displayWarning(label, shown, unit, dec, warnPhase);
+}
+#endif
+
+#ifdef ENABLE_SHIFT_LIGHT
+// Draws the menu item currently being edited.
+static void renderMenu() {
+    char        v[10];
+    const char* title = "";
+    const char* unit  = "";
+    bool        last  = (menuItem == MENU_LAST);
+
+    switch (menuItem) {
+        case 0:  title = "SHIFT POINT";  unit = "rpm"; utoa(menuRpm, v, 10); break;
+        case 1:  title = "ECT WARNING";  unit = "C";   utoa(menuEct, v, 10); break;
+        case 2:  title = "OIL WARNING";  unit = "C";   utoa(menuOil, v, 10); break;
+        case 3:  displayUnitsMenu(menuUnit, last); return;
+        default: {
+            float out; uint8_t dec;
+            boostConvert(menuUnit, menuBoost, out, unit, dec);
+            title = "BOOST WARNING";
+            dtostrf(out, 1, dec, v);
+            break;
+        }
+    }
+    displayMenuValue(title, v, unit, last);
+}
+#endif
+
 // ============================================================================
 // RENDER
 // Dispatches to the correct display function based on current parameter and
@@ -651,8 +798,15 @@ static void renderDisplay() {
     }
     displaySetShiftBar(shiftBarPx);
     if (menuActive) {
-        if (menuItem == 0) displayShiftMenu(menuRpm);
-        else               displayUnitsMenu(menuUnit);
+        renderMenu();
+        displayDirty = false;
+        return;
+    }
+#endif
+
+#ifdef ENABLE_WARNINGS
+    if (warnShown >= 0) {
+        renderWarning();
         displayDirty = false;
         return;
     }
@@ -666,21 +820,22 @@ static void renderDisplay() {
 #ifdef ENABLE_STATS
     static const char* const suffix[VIEW_COUNT] = { "", " max", " min", " avg" };
     const char* base = (currentDisp == DISP_BAR) ? c.barLabel : c.textLabel;
-    snprintf(label, sizeof(label), "%s%s", base, suffix[statView]);
+    strcpy(label, base);
+    strcat(label, suffix[statView]);   // labels are short; label[20] is plenty
     if (statView != VIEW_LIVE) {
         const Stat &st = stats[currentParam];
         value = (statView == VIEW_MAX) ? st.mx : (statView == VIEW_MIN) ? st.mn : st.avg;
         stale = (st.n == 0);   // Nothing recorded yet -> NO DATA
     }
 #else
-    snprintf(label, sizeof(label), "%s", (currentDisp == DISP_BAR) ? c.barLabel : c.textLabel);
+    strcpy(label, (currentDisp == DISP_BAR) ? c.barLabel : c.textLabel);
 #endif
 
     if (currentParam == PARAM_BOOST) {
         float       shown;
         const char* unit;
         uint8_t     dec;
-        boostConvert(value, shown, unit, dec);   // value is kPa (live or stat)
+        boostConvert(boostUnit, value, shown, unit, dec);   // value is kPa (live or stat)
         if (currentDisp == DISP_BAR) {
             displayBoostBar(label, value, shown, unit, dec, stale);
         } else {
@@ -740,6 +895,10 @@ void loop() {
 
 #ifdef ENABLE_SHIFT_LIGHT
     updateShiftLight();
+#endif
+
+#ifdef ENABLE_WARNINGS
+    updateWarnings();
 #endif
 
 #ifdef ENABLE_STATS

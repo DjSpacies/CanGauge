@@ -159,6 +159,42 @@
 #define BOOST_KPA_PER_SEGMENT      (100.0f / 6.0f)
 
 // ============================================================================
+// WARNINGS (ECT, oil temperature, boost)
+// A full-screen flashing warning, e.g. "ECT HIGH / 102C", interrupts every
+// screen except the menu (shift light flash takes priority). Any button press
+// dismisses the warning on screen (the press does nothing else); it comes back
+// if the condition persists after WARN_REALERT_MS, or on the next excursion.
+// Limits are adjustable in the menu and stored in EEPROM. Requires
+// ENABLE_SHIFT_LIGHT (the menu lives with it).
+// ============================================================================
+#define ENABLE_WARNINGS
+
+#define WARN_ECT_DEFAULT           100    // C
+#define WARN_ECT_MIN               90
+#define WARN_ECT_MAX               120
+#define WARN_ECT_STEP              1
+
+#define WARN_OIL_DEFAULT           130    // C
+#define WARN_OIL_MIN               110
+#define WARN_OIL_MAX               150
+#define WARN_OIL_STEP              5
+
+#define WARN_BOOST_DEFAULT         124    // kPa gauge (~18 psi)
+#define WARN_BOOST_MIN             100    // ~14.5 psi
+#define WARN_BOOST_MAX             180    // ~26 psi
+#define WARN_BOOST_STEP_KPA        5      // kPa / bar steps (psi mode steps 1 psi)
+
+#define WARN_HYST_TEMP             3      // Clears this far below the limit (C)
+#define WARN_HYST_BOOST_KPA        10     // Clears this far below the limit (kPa)
+#define WARN_FLASH_HALF_PERIOD_MS  250    // ~2Hz, slower than the shift flash
+#define WARN_REALERT_MS            30000  // Re-show a dismissed warning after this
+#define WARN_EEPROM_ADDR           8      // [ect][oil][boost][checksum]
+
+#if defined(ENABLE_WARNINGS) && !defined(ENABLE_SHIFT_LIGHT)
+  #error "ENABLE_WARNINGS requires ENABLE_SHIFT_LIGHT (menu and buttons)."
+#endif
+
+// ============================================================================
 // MIN / MAX / AVG HOLD
 // Button B short press cycles the current screen: live -> MAX -> MIN -> AVG.
 // Stats are sampled once per STATS_SAMPLE_MS while data is fresh and reset at
