@@ -288,6 +288,30 @@ static void handleMenu(ButtonEvent a, ButtonEvent b) {
 }
 #endif
 
+// ----------------------------------------------------------------------------
+// LAST VIEW PERSISTENCE
+// The current parameter and bar/text choice are saved to EEPROM whenever they
+// change and restored at boot. Stats views and the menu are never saved.
+// Stored as [packed][~packed] where packed = param | (disp << 4); anything
+// invalid falls back to the defaults. update() skips unchanged bytes.
+// ----------------------------------------------------------------------------
+static void saveView() {
+    uint8_t packed = (uint8_t)currentParam | ((uint8_t)currentDisp << 4);
+    EEPROM.update(VIEW_EEPROM_ADDR,     packed);
+    EEPROM.update(VIEW_EEPROM_ADDR + 1, (uint8_t)~packed);
+}
+
+static void loadView() {
+    uint8_t packed = EEPROM.read(VIEW_EEPROM_ADDR);
+    uint8_t param  = packed & 0x0F;
+    uint8_t disp   = packed >> 4;
+    if (EEPROM.read(VIEW_EEPROM_ADDR + 1) == (uint8_t)~packed &&
+        param < PARAM_COUNT && disp <= DISP_TEXT) {
+        currentParam = (Parameter)param;
+        currentDisp  = (DisplayType)disp;
+    }
+}
+
 static void handleButtons() {
     ButtonEvent a = pollButton(btnA);
     ButtonEvent b = pollButton(btnB);
@@ -324,12 +348,14 @@ static void handleButtons() {
         // Toggle display type between bar graph and text
         currentDisp  = (currentDisp == DISP_BAR) ? DISP_TEXT : DISP_BAR;
         displayDirty = true;
+        saveView();
         Serial.print(F("Long press — display: "));
         Serial.println(currentDisp == DISP_BAR ? F("Bar") : F("Text"));
     } else if (a == BTN_EVT_SHORT) {
         // Advance to next parameter
         currentParam = (Parameter)((currentParam + 1) % PARAM_COUNT);
         displayDirty = true;
+        saveView();
         Serial.print(F("Short press — param: "));
         switch (currentParam) {
             case PARAM_ECT:  Serial.println(F("ECT"));     break;
@@ -681,6 +707,7 @@ void setup() {
     pinMode(BUTTON2_PIN, INPUT_PULLUP);
 
     displayInit();
+    loadView();
 #ifdef ENABLE_SHIFT_LIGHT
     loadSettings();
 #endif

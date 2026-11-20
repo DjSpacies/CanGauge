@@ -63,6 +63,8 @@ A short press on button B cycles the current screen between live, max, min and a
 
 Menu items: shift point, then boost units.
 
+The last parameter and bar / numerical mode are remembered across power cycles (stored in EEPROM). The menu and min / max / average views are not, so the gauge always boots into a live view.
+
 ## Configuration
 
 Hardware pins, CAN IDs, gauge ranges and display options all live in `config.h`, so the firmware can be adapted to a different car or wiring without touching the main code. The CAN stream IDs and signal positions are set up to match my Link G4+ transmit configuration and will need adjusting for other setups.

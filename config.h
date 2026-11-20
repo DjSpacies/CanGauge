@@ -136,7 +136,8 @@
 #define SHIFT_MENU_MIN_RPM         6000
 #define SHIFT_MENU_MAX_RPM         8000
 #define SHIFT_MENU_STEP_RPM        100
-#define SHIFT_EEPROM_ADDR          0      // Uses 4 bytes: magic, rpm lo/hi, checksum
+#define SHIFT_EEPROM_ADDR          0      // Uses 6 bytes: shift record (4) + boost unit pair (2)
+#define VIEW_EEPROM_ADDR           6      // Last page / display type: [packed][~packed]
 
 #if defined(ENABLE_SHIFT_LIGHT) && defined(SHIFT_TEST_USE_AP) && !defined(ENABLE_AP_PARAM)
   #error "SHIFT_TEST_USE_AP requires ENABLE_AP_PARAM."
