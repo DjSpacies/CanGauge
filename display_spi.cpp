@@ -88,9 +88,105 @@ static void drawCleanStr(int x, int y, const char* s) {
     }
 }
 
+// Shift light ramp: solid full-height bar growing left to right, drawn at the
+// end of every page pass of every screen. XOR mode (draw color 2) so whatever
+// is underneath stays readable (inverted) instead of being blotted out.
+static uint8_t shiftBarPx = 0;
+
+static void drawShiftOverlay() {
+    if (!shiftBarPx) return;
+    oled.setDrawColor(2);
+    oled.drawBox(0, 0, shiftBarPx, SCREEN_HEIGHT);
+    oled.setDrawColor(1);
+}
+
+// Blocky letter built from rectangles (no font data). Supports S H I F T.
+// x,y = top-left, w = width, h = height, t = stroke thickness.
+static void drawBlockLetter(char c, int x, int y, int w, int h, int t) {
+    int midY = y + (h - t) / 2;
+    switch (c) {
+        case 'S':
+            oled.drawBox(x, y, w, t);                         // top
+            oled.drawBox(x, midY, w, t);                      // middle
+            oled.drawBox(x, y + h - t, w, t);                 // bottom
+            oled.drawBox(x, y, t, midY + t - y);              // upper left
+            oled.drawBox(x + w - t, midY, t, y + h - midY);   // lower right
+            break;
+        case 'H':
+            oled.drawBox(x, y, t, h);
+            oled.drawBox(x + w - t, y, t, h);
+            oled.drawBox(x, midY, w, t);
+            break;
+        case 'I':
+            oled.drawBox(x, y, t, h);
+            break;
+        case 'F':
+            oled.drawBox(x, y, t, h);
+            oled.drawBox(x, y, w, t);
+            oled.drawBox(x, midY, w - t, t);
+            break;
+        case 'T':
+            oled.drawBox(x, y, w, t);
+            oled.drawBox(x + (w - t) / 2, y, t, h);
+            break;
+    }
+}
+
 // ============================================================================
 // PUBLIC INTERFACE
 // ============================================================================
+
+void displaySetShiftBar(uint8_t widthPx) {
+    shiftBarPx = (widthPx > SCREEN_WIDTH) ? SCREEN_WIDTH : widthPx;
+}
+
+void displayShiftMenu(uint16_t rpm) {
+    char valBuf[8];
+    snprintf(valBuf, sizeof(valBuf), "%u", rpm);
+
+    oled.firstPage();
+    do {
+        oled.setFont(u8g2_font_6x10_tf);
+        oled.drawStr(0, 10, "SHIFT POINT");
+
+        oled.setFont(u8g2_font_logisoso28_tn);
+        uint8_t numW = oled.getStrWidth(valBuf);
+        oled.setFont(u8g2_font_6x10_tf);
+        uint8_t totalW = numW + 2 + 18;  // number + gap + "rpm"
+        uint8_t startX = (SCREEN_WIDTH - totalW) / 2;
+
+        oled.setFont(u8g2_font_logisoso28_tn);
+        oled.drawStr(startX, 46, valBuf);
+        oled.setFont(u8g2_font_6x10_tf);
+        oled.drawStr(startX + numW + 2, 46, "rpm");
+
+        oled.drawStr(0, SCREEN_HEIGHT - 1, "A- B+ hold A=X B=NEXT");
+        drawShiftOverlay();
+    } while (oled.nextPage());
+}
+
+void displayShiftNow(bool inverted) {
+    oled.firstPage();
+    do {
+        // 5 letters: S H F T are 20px wide, I is 6px; 6px gaps; stroke 6px.
+        const int LW = 20, LT = 6, LH = 36, GAP = 6, LY = (SCREEN_HEIGHT - LH) / 2;
+        const int totalW = 4 * LW + LT + 4 * GAP;
+        if (inverted) {
+            oled.setDrawColor(1);
+            oled.drawBox(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+            oled.setDrawColor(0);
+        } else {
+            oled.setDrawColor(1);
+        }
+        int x = (SCREEN_WIDTH - totalW) / 2;
+        for (const char* p = "SHIFT"; *p; p++) {
+            int w = (*p == 'I') ? LT : LW;
+            drawBlockLetter(*p, x, LY, w, LH, LT);
+            x += w + GAP;
+        }
+        oled.setDrawColor(1);
+    } while (oled.nextPage());
+}
 
 void displayInit() {
     oled.begin();
@@ -132,6 +228,74 @@ void displayBarGraph(const char* label,
             oled.setFont(u8g2_font_6x10_tf);
             oled.drawStr(0, SCREEN_HEIGHT - 1, "NO DATA");
         }
+        drawShiftOverlay();
+    } while (oled.nextPage());
+}
+
+void displayBoostBar(const char* label,
+                     float       kpa,
+                     float       shown,
+                     const char* unit,
+                     uint8_t     decimals,
+                     bool        stale) {
+
+    // Segment grid matches drawBarFill (segment i spans x = i*BAR_WIDTH). The
+    // zero segment boundary is where vacuum (left) meets boost (right).
+    const int8_t firstSeg = 2;
+    const int8_t zeroSeg  = firstSeg + BOOST_VAC_SEGMENTS;
+
+    float f = kpa / BOOST_KPA_PER_SEGMENT;
+    if (f >  BOOST_BOOST_SEGMENTS) f =  BOOST_BOOST_SEGMENTS;
+    if (f < -BOOST_VAC_SEGMENTS)   f = -BOOST_VAC_SEGMENTS;
+    int8_t n = (int8_t)f;                 // whole segments, toward zero
+
+    char valBuf[12];
+    formatValue(valBuf, sizeof(valBuf), shown, decimals);
+    char line[28];
+    snprintf(line, sizeof(line), "%s: %s%s", label, valBuf, unit);
+
+    oled.firstPage();
+    do {
+        drawBarChrome(false);
+
+        if (n > 0) {
+            for (int8_t i = zeroSeg; i < zeroSeg + n; i++)
+                oled.drawXBMP(i * BAR_WIDTH, 25, BAR_WIDTH, BAR_HEIGHT, barSprite);
+        } else if (n < 0) {
+            for (int8_t i = zeroSeg + n; i < zeroSeg; i++)
+                oled.drawXBMP(i * BAR_WIDTH, 25, BAR_WIDTH, BAR_HEIGHT, barSprite);
+        }
+
+        // Zero marker: heavy tick above the bar and a "0" below it.
+        oled.drawBox(zeroSeg * BAR_WIDTH - 1, 14, 2, 10);
+        oled.setFont(u8g2_font_6x10_tf);
+        oled.drawStr(zeroSeg * BAR_WIDTH - 3, SCREEN_HEIGHT - 1, "0");
+
+        uint8_t w = strlen(line) * 6;
+        drawCleanStr((SCREEN_WIDTH - w) / 2, 10, line);
+
+        if (stale) {
+            oled.setFont(u8g2_font_6x10_tf);
+            oled.drawStr(0, SCREEN_HEIGHT - 1, "NO DATA");
+        }
+        drawShiftOverlay();
+    } while (oled.nextPage());
+}
+
+void displayUnitsMenu(uint8_t sel) {
+    static const char* const names[3] = { "kPa", "bar", "psi / inHg" };
+
+    oled.firstPage();
+    do {
+        oled.setFont(u8g2_font_6x10_tf);
+        oled.drawStr(0, 10, "BOOST UNITS");
+        for (uint8_t i = 0; i < 3; i++) {
+            uint8_t y = 26 + i * 12;
+            if (i == sel) oled.drawStr(0, y, ">");
+            oled.drawStr(12, y, names[i]);
+        }
+        oled.drawStr(0, SCREEN_HEIGHT - 1, "A< B> hold A=X B=OK");
+        drawShiftOverlay();
     } while (oled.nextPage());
 }
 
@@ -169,6 +333,7 @@ void displayTextScreen(const char* label,
         if (stale) {
             oled.drawStr(0, SCREEN_HEIGHT - 1, "NO DATA");
         }
+        drawShiftOverlay();
     } while (oled.nextPage());
 }
 

@@ -48,4 +48,31 @@ void displayTextScreen(const char* label,
                        uint8_t     decimals,
                        bool        stale);
 
+// Shift light ramp overlay. A solid full-height bar of this width
+// (0..SCREEN_WIDTH px, 0 = off) is drawn left to right on top of whichever
+// screen is showing.
+void displaySetShiftBar(uint8_t widthPx);
+
+// Full-screen "SHIFT NOW" screen. inverted flips text/background so calling
+// it alternately with true/false produces the flash.
+void displayShiftNow(bool inverted);
+
+// Boost / vacuum bar graph. The bar is zero-centred (vacuum grows left from
+// zero, boost grows right) and is always scaled in kPa, whatever unit is shown.
+//   kpa     — gauge pressure in kPa, drives the bar
+//   shown   — the same pressure converted to the display unit, for the readout
+//   unit    — unit suffix for the readout ("kPa", "bar", "psi", "inHg")
+void displayBoostBar(const char* label,
+                     float       kpa,
+                     float       shown,
+                     const char* unit,
+                     uint8_t     decimals,
+                     bool        stale);
+
+// Boost units menu screen. sel = 0 kPa, 1 bar, 2 psi/inHg.
+void displayUnitsMenu(uint8_t sel);
+
+// Shift point menu screen showing the value being edited, with button hints.
+void displayShiftMenu(uint16_t rpm);
+
 #endif // DISPLAY_H

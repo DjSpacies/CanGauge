@@ -16,26 +16,52 @@ Telemetry comes in over SPI via a mini MCP2515 CAN module brought from aliexpres
 | MCU | Arduino Nano (ATmega328) |
 | CAN controller | MCP2515 module over SPI (note: 8 MHz crystal variant) |
 | Display | 128x64 SSD1306 OLED over hardware SPI |
-| Input | Push button (short press / long press) |
+| Input | Two push buttons (A on D4, B on D3), short / long press |
 | Power | 12V → 5V via LM2596 buck converter |
 | ECU | Link G4+ broadcasting on CAN at 250 kbps |
 
 ## Features
 
-Three parameters are implemented so far:
+Parameters:
 
 - Engine Coolant Temperature (ECT)
 - Oil Temperature
 - Battery Voltage
+- Boost / vacuum (MGP) - zero-centred bar with zero about a third from the left to show more boost than vacuum. Selectable units: kPa, bar, or psi (boost) / inHg (vacuum)
+- Accelerator position (AP) - temporary latency-test parameter
 
 Each can be shown in one of two display modes:
 
-- **Bar graph** — emulates the original digital dash style, with added numerical readout.
-- **Numerical** — a large, clean readout (e.g. `13.0V`).
+- **Bar graph** - emulates the original digital dash style, with added numerical readout.
+- **Numerical** - a large, clean readout (e.g. `13.0V`).
 
-A single push button drives the UI: a **short press** cycles through the parameters, and a **long press** toggles between bar and numerical display. All button debouncing is handled in software via a small state machine.
+The firmware flags stale data - if a signal stops updating on the bus, the gauge shows a "NO DATA" indicator rather than displaying a frozen value.
 
-The firmware also flags stale data — if a signal stops updating on the bus, the gauge shows a "NO DATA" indicator rather than displaying a frozen value.
+### Shift light
+
+Driven from engine RPM (CAN stream 1) with its own logic, since the gauge consumes telemetry over CAN rather than using an ECU output. It overrides whatever screen is showing:
+
+- A solid bar sweeps left to right across the last 500 rpm below the shift point.
+- At the shift point the screen flashes **SHIFT** (text and background inverting).
+- It is disabled below 2000 rpm and when RPM data goes stale, and uses hysteresis so it does not flicker at the threshold.
+- The shift point is adjustable from 6000 to 8000 rpm in the menu and stored in EEPROM.
+
+For bench testing without a running engine, `SHIFT_TEST_USE_AP` in `config.h` drives the shift light from the accelerator position instead.
+
+### Min / max / average
+
+A short press on button B cycles the current screen between live, max, min and average (sampled once a second, reset at power-up). It returns to live after 10 seconds without a button press so a held value is never mistaken for a live one.
+
+### Controls
+
+| Input | Normal | In menu |
+|-------|--------|---------|
+| A short | Next parameter | Decrease / previous |
+| A long | Toggle bar / numerical | Cancel and exit |
+| B short | Cycle live / max / min / avg | Increase / next |
+| B long | Open menu | Next item, then save and exit |
+
+Menu items: shift point, then boost units.
 
 ## Configuration
 
@@ -58,5 +84,5 @@ If you're using an MCP2515 module with an 8 MHz crystal (some of them use 16MHz)
 ## Roadmap
 
 - Optimise flash usage to free up headroom
-- Second push button for min/max/avg hold (so I can check how hot things got after a session)
+- Reset min/max/avg from the menu
 - Transmit inputs back to the Link ECU via a menu e.g select boost level, toggle Intercooler Spray etc.

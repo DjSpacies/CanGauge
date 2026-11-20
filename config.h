@@ -25,6 +25,9 @@
 // Push button — short press cycles parameter, long press toggles display type
 #define BUTTON_PIN   4
 
+// Second push button (found via pin scan) — long press opens the shift light menu
+#define BUTTON2_PIN  3
+
 // SPI display pins — only used when DISPLAY_DRIVER_SPI is active
 // Hardware SPI MOSI = pin 11, SCK = pin 13 (fixed on Nano, no define needed)
 #define DISP_CS_PIN   9
@@ -106,6 +109,64 @@
 #define ENABLE_AP_PARAM
 #define AP_GAUGE_MIN   0.0f
 #define AP_GAUGE_MAX   100.0f
+
+// ============================================================================
+// SHIFT LIGHT
+// A solid bar sweeps left to right over the last SHIFT_RAMP_RPM below the shift point, then
+// the whole screen flashes "SHIFT" (text/background inverting). Overrides
+// whatever screen is showing. Comment out ENABLE_SHIFT_LIGHT to strip it.
+// ============================================================================
+#define ENABLE_SHIFT_LIGHT
+
+// BENCH TESTING: drive the shift light from AP (0-100%) instead of RPM,
+// mapped linearly to 0..SHIFT_TEST_RPM_MAX. Comment out to use real RPM.
+// Requires ENABLE_AP_PARAM.
+// #define SHIFT_TEST_USE_AP
+#define SHIFT_TEST_RPM_MAX         8500   // Must exceed SHIFT_MENU_MAX_RPM or high shift points can't be reached with AP
+
+#define SHIFT_RPM_DEFAULT          6000   // Shift point
+#define SHIFT_RAMP_RPM             500    // Edge bars ramp across this window
+#define SHIFT_HYSTERESIS_RPM       50     // Flash stops this far below shift point
+#define SHIFT_MIN_RPM              2000   // Shift light disabled below this
+#define SHIFT_FLASH_HALF_PERIOD_MS 60     // ~8Hz flash
+#define SHIFT_DATA_TIMEOUT         500    // ms without input -> shift light off
+
+// Menu: shift point is adjustable in steps between these limits (wraps around
+// at either end) and saved to EEPROM.
+#define SHIFT_MENU_MIN_RPM         6000
+#define SHIFT_MENU_MAX_RPM         8000
+#define SHIFT_MENU_STEP_RPM        100
+#define SHIFT_EEPROM_ADDR          0      // Uses 4 bytes: magic, rpm lo/hi, checksum
+
+#if defined(ENABLE_SHIFT_LIGHT) && defined(SHIFT_TEST_USE_AP) && !defined(ENABLE_AP_PARAM)
+  #error "SHIFT_TEST_USE_AP requires ENABLE_AP_PARAM."
+#endif
+
+// ============================================================================
+// BOOST / VACUUM (MGP, Link stream 1 bytes 2-3, 16-bit, 1 kPa/unit)
+// ECU display offset is 100 kPa: CAN raw = gauge kPa + 100, so raw 0 = full
+// vacuum (-100 kPa) and raw 100 = atmospheric (0 kPa gauge).
+//
+// Bar is zero-centred with zero ~1/3 from the left: 6 vacuum segments and 11
+// boost segments of equal size, using the same segment grid as the other
+// bars. 100/6 = 16.7 kPa per segment, so the bar spans -100 .. +183 kPa
+// (about -29.5 inHg .. +26.6 psi).
+// ============================================================================
+#define BOOST_ECU_OFFSET_KPA       100
+#define BOOST_VAC_SEGMENTS         6
+#define BOOST_BOOST_SEGMENTS       11
+#define BOOST_KPA_PER_SEGMENT      (100.0f / 6.0f)
+
+// ============================================================================
+// MIN / MAX / AVG HOLD
+// Button B short press cycles the current screen: live -> MAX -> MIN -> AVG.
+// Stats are sampled once per STATS_SAMPLE_MS while data is fresh and reset at
+// power-up. The view returns to live after STATS_VIEW_TIMEOUT_MS of no button
+// presses so a held value is never mistaken for a live one (0 = never).
+// ============================================================================
+#define ENABLE_STATS
+#define STATS_SAMPLE_MS            1000
+#define STATS_VIEW_TIMEOUT_MS      10000
 
 // ============================================================================
 // SERIAL
